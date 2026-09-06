@@ -12,6 +12,14 @@ import { logout, type User } from "@/lib/auth-client";
  * confirmed a session and passed the user down, so there is no loading
  * flash and no protected markup ever reaches a signed-out visitor.
  */
+const NAV = [
+  { href: "/queue", label: "Queue" },
+  { href: "/documents", label: "Documents" },
+  { href: "/chat", label: "Chat" },
+  { href: "/audit", label: "Audit" },
+  { href: "/settings/rules", label: "Rules" },
+];
+
 export function AppShell({
   user,
   children,
@@ -32,8 +40,8 @@ export function AppShell({
     <div className="flex min-h-screen">
       <aside className="bg-card flex w-64 shrink-0 flex-col border-r">
         <div className="flex items-center justify-between px-4 py-4">
-          <Link href="/" className="text-sm font-semibold tracking-tight">
-            AI Project
+          <Link href="/queue" className="text-sm font-semibold tracking-tight">
+            Docket
           </Link>
           <button
             onClick={onSignOut}
@@ -42,17 +50,20 @@ export function AppShell({
             Sign out
           </button>
         </div>
-        <nav className="px-2">
-          <Link
-            href="/documents"
-            className={`block rounded-lg px-2 py-1.5 text-sm transition-colors ${
-              pathname === "/documents"
-                ? "bg-accent font-medium"
-                : "text-muted-foreground hover:bg-accent/50"
-            }`}
-          >
-            Documents
-          </Link>
+        <nav className="space-y-px px-2">
+          {NAV.map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={`flex items-center justify-between rounded-lg px-2 py-1.5 text-sm transition-colors ${
+                pathname === item.href || pathname.startsWith(`${item.href}/`)
+                  ? "bg-accent font-medium"
+                  : "text-muted-foreground hover:bg-accent/50"
+              }`}
+            >
+              {item.label}
+            </Link>
+          ))}
         </nav>
         <div className="mt-4 min-h-0 flex-1 overflow-y-auto border-t px-2 pt-3">
           <ThreadSidebar activePath={pathname} />

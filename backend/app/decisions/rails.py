@@ -85,6 +85,46 @@ class FinalDecision:
         return self.outcome is Outcome.auto_approve
 
 
+_CITED_UNRETRIEVED = "which was not offered this turn"
+
+
+def _grounding_note(failure: str) -> str:
+    """Say what went wrong in words a reviewer can act on.
+
+    The failure strings are precise and are written for whoever debugs the
+    pipeline. A person clearing a queue needs to know one thing: the reason
+    given for this decision does not hold up, so read it yourself.
+    """
+    if "no citations" in failure:
+        return (
+            "The pipeline reached this outcome without pointing at any policy "
+            "clause, so there is nothing to check it against. Decide this one "
+            "yourself."
+        )
+    if "not verbatim" in failure:
+        return (
+            "A policy clause was quoted inexactly, so the quote could not be "
+            "confirmed against the policy. Read the clause before deciding."
+        )
+    if _CITED_UNRETRIEVED in failure:
+        return (
+            "A policy clause was cited that was never retrieved, so it cannot "
+            "be shown to you. Decide this one yourself."
+        )
+    if "judge rejected" in failure:
+        return (
+            "A policy clause was quoted correctly but does not support the "
+            "claim it was attached to, so the reasoning does not hold up. "
+            "Read the clauses yourself."
+        )
+    if "no policy clauses retrieved" in failure:
+        return (
+            "No policy clause was found for this document. Either the policy "
+            "does not cover it, or the corpus is missing something."
+        )
+    return f"The decision could not be grounded in policy: {failure}"
+
+
 def apply_rails(
     result: DecisionResult,
     invoice: Invoice,
@@ -101,7 +141,7 @@ def apply_rails(
     # Rail 1: grounding.
     if not result.grounding_passed:
         outcome = Outcome.needs_human
-        notes.append(f"Grounding failed: {result.grounding_failure}")
+        notes.append(_grounding_note(result.grounding_failure))
 
     # Rail 2: unverified fields.
     if unverified_fields:

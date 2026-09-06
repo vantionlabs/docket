@@ -92,6 +92,7 @@ class ExtractFields(Node):
             org_id=doc.org_id,
             document_id=doc.id,
             schema_name=SCHEMA_NAME,
+            document_text=ctx.metadata["text"],
             fields=json.loads(result.data.model_dump_json()),
             unverified_fields=result.unverified_fields,
             arithmetic_ok=arithmetic.ok,

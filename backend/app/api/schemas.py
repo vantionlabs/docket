@@ -148,11 +148,23 @@ class DecisionOut(BaseModel):
     created_at: datetime
     citations: list[DecisionCitationOut] = Field(default_factory=list)
 
+    # What the case is, for a queue row to lead with.
+    filename: str = ""
+    supplier: str | None = None
+    amount: str | None = None
+    currency: str | None = None
+
 
 class DecisionDetailOut(DecisionOut):
     """The decision detail screen's payload (spec section 15)."""
 
-    filename: str
+    document_text: str = Field(
+        default="",
+        description=(
+            "The parsed document, exactly as the verbatim check saw it. "
+            "Every field's `source_span` is a literal substring of this."
+        ),
+    )
     unverified_fields: list[str] = Field(default_factory=list)
     arithmetic_ok: bool = True
     arithmetic_failures: list[str] = Field(default_factory=list)

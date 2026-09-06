@@ -353,6 +353,16 @@ class Extraction(Base):
         ForeignKey("source_documents.id", ondelete="CASCADE"), index=True
     )
     schema_name: Mapped[str] = mapped_column(Text)  # e.g. "invoice"
+    document_text: Mapped[str] = mapped_column(Text, default="")
+    """The parsed document this extraction was made from.
+
+    Stored rather than re-derived, for two reasons. The detail screen
+    highlights each field's source span inside it, and re-parsing a PDF on
+    every page view would be both slow and not guaranteed to produce the
+    same text. More importantly it makes the provenance claim reproducible:
+    an auditor can re-run the verbatim check a year later against the exact
+    text the check originally ran against.
+    """
     fields: Mapped[dict] = mapped_column(JSONB, default=dict)
     unverified_fields: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)
     arithmetic_ok: Mapped[bool] = mapped_column(Boolean, default=True)

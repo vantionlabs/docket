@@ -10,6 +10,7 @@ documents it belongs to.
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -33,17 +34,40 @@ USER = CurrentUser(
 
 
 def _decision(status=DecisionStatus.pending_review, **overrides):
-    row = MagicMock()
-    row.id = overrides.get("id", uuid.uuid4())
-    row.user_id = USER.id
-    row.org_id = ORG
-    row.extraction_id = None
-    row.status = status
-    row.override_outcome = None
-    row.override_note = None
-    row.reviewed_by = None
-    row.reviewed_at = None
-    row.outcome = str(Outcome.route_for_approval)
+    """A decision row shaped like the real one.
+
+    A bare MagicMock was enough while the tests only mutated it, and stopped
+    being enough the moment an endpoint serialized it: every unset attribute
+    became a MagicMock that failed validation. Filling the fields in makes
+    the failure "this endpoint is wrong" rather than "the mock is thin".
+    """
+    row = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=USER.id,
+        org_id=ORG,
+        document_id=uuid.uuid4(),
+        extraction_id=None,
+        outcome=str(Outcome.route_for_approval),
+        effective_outcome=str(Outcome.route_for_approval),
+        rationale="Under the limit [1].",
+        unmet_conditions=[],
+        rail_notes=[],
+        rule_id=None,
+        grounding_passed=True,
+        grounding_failure=None,
+        status=status,
+        assigned_to=None,
+        reviewed_by=None,
+        reviewed_at=None,
+        override_outcome=None,
+        override_note=None,
+        created_at=datetime.now(UTC),
+        citations=[],
+        filename="",
+        supplier=None,
+        amount=None,
+        currency=None,
+    )
     for key, value in overrides.items():
         setattr(row, key, value)
     return row
@@ -388,3 +412,109 @@ def test_decided_at_is_not_the_review_time():
     decided = datetime(2026, 9, 6, 10, 0, tzinfo=UTC)
     reviewed = datetime(2026, 9, 8, 9, 30, tzinfo=UTC)
     assert decided < reviewed
+
+
+# --- the detail screen's payload ----------------------------------------
+
+
+def _detail_client(monkeypatch, decision, extraction, filename="invoice.md"):
+    """A client whose db returns a decision, its extraction and its document.
+
+    Worth the setup: the detail endpoint assembles four sources into one
+    payload, and it broke once by passing `filename` twice after the field
+    moved onto the shared summary. That was a 500 the UI rendered as
+    "Not found", which is the worst kind of bug to debug from the outside.
+    """
+    from app.db.models import Decision as DecisionModel
+    from app.db.models import Extraction as ExtractionModel
+
+    client = _client(monkeypatch, USER)
+
+    def _get(model, _id):
+        if model is DecisionModel:
+            return decision
+        if model is ExtractionModel:
+            return extraction
+        return MagicMock(filename=filename)
+
+    client.db.get.side_effect = _get
+    # `_summarize` issues two selects: documents, then extractions. Rows come
+    # back as objects with named columns, not tuples.
+    client.db.execute.side_effect = [
+        [SimpleNamespace(id=decision.document_id, filename=filename)],
+        [SimpleNamespace(id=extraction.id, fields=extraction.fields)],
+    ]
+    return client
+
+
+def test_detail_assembles_without_duplicating_a_field(monkeypatch):
+    decision = _decision(extraction_id=uuid.uuid4())
+    extraction = MagicMock(
+        id=decision.extraction_id,
+        schema_name="invoice",
+        document_text="Fabrikam Office Supplies BV\nTotal including VAT: EUR 12196.80",
+        unverified_fields=[],
+        arithmetic_ok=True,
+        arithmetic_failures=[],
+        fields={
+            "supplier": {"value": "Fabrikam Office Supplies BV", "source_span": "Fabrikam"},
+            "total_incl_vat": {"value": "12196.80", "source_span": "12196.80"},
+        },
+    )
+    client = _detail_client(monkeypatch, decision, extraction)
+
+    response = client.get(f"/decisions/{decision.id}")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["document_text"].startswith("Fabrikam")
+    assert body["supplier"] == "Fabrikam Office Supplies BV"
+    assert body["amount"] == "12196.80"
+
+
+def test_detail_orders_fields_by_the_schema_not_by_storage(monkeypatch):
+    """Postgres JSONB does not preserve key order, so without this the
+    reviewer meets `due_on` before `supplier`."""
+    decision = _decision(extraction_id=uuid.uuid4())
+    extraction = MagicMock(
+        id=decision.extraction_id,
+        schema_name="invoice",
+        document_text="",
+        unverified_fields=[],
+        arithmetic_ok=True,
+        arithmetic_failures=[],
+        # Deliberately scrambled, the way JSONB hands it back.
+        fields={
+            "due_on": {"value": "2026-04-02", "source_span": "2 April 2026"},
+            "line_items": [
+                {"amount": {"value": "5760.0", "source_span": "5760.00"}},
+            ],
+            "total_incl_vat": {"value": "12196.80", "source_span": "12196.80"},
+            "supplier": {"value": "Fabrikam", "source_span": "Fabrikam"},
+        },
+    )
+    client = _detail_client(monkeypatch, decision, extraction)
+
+    names = [row["name"] for row in client.get(f"/decisions/{decision.id}").json()["fields"]]
+    assert names.index("supplier") < names.index("total_incl_vat")
+    assert names.index("total_incl_vat") < names.index("due_on")
+    # Line items are components, and they come after the headline fields.
+    assert names.index("due_on") < names.index("line_items.0.amount")
+
+
+def test_unknown_schema_still_renders(monkeypatch):
+    """A stored extraction from a schema this build no longer has must not
+    take the screen down with it."""
+    decision = _decision(extraction_id=uuid.uuid4())
+    extraction = MagicMock(
+        id=decision.extraction_id,
+        schema_name="contract_renewal_v0",
+        document_text="",
+        unverified_fields=[],
+        arithmetic_ok=True,
+        arithmetic_failures=[],
+        fields={"counterparty": {"value": "Acme", "source_span": "Acme"}},
+    )
+    client = _detail_client(monkeypatch, decision, extraction)
+    response = client.get(f"/decisions/{decision.id}")
+    assert response.status_code == 200
+    assert response.json()["fields"][0]["name"] == "counterparty"

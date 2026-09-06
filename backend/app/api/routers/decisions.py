@@ -35,6 +35,7 @@ from app.db.engine import get_db
 from app.db.models import Decision, DecisionStatus, Extraction, SourceDocument
 from app.decisions.approval import emit_execute
 from app.decisions.models import Outcome
+from app.extraction.schemas import field_order
 
 router = APIRouter(prefix="/decisions", tags=["decisions"], responses=UNAUTHORIZED)
 
@@ -70,7 +71,52 @@ def list_decisions(
     )
     if status is not None:
         stmt = stmt.where(Decision.status == status)
-    return list(db.scalars(stmt))
+    return _summarize(db, list(db.scalars(stmt)))
+
+
+def _summarize(db: Session, decisions: list[Decision]) -> list[DecisionOut]:
+    """Attach the filename, supplier and amount to each queue row.
+
+    A queue row has to say what the case is before it says why it stalled.
+    "Grounding failed" is true and useless; "Fabrikam, EUR 12,196.80" is
+    what a reviewer recognises. One batched lookup, not one per row.
+    """
+    if not decisions:
+        return []
+
+    documents = {
+        row.id: row.filename
+        for row in db.execute(
+            select(SourceDocument.id, SourceDocument.filename).where(
+                SourceDocument.id.in_({d.document_id for d in decisions})
+            )
+        )
+    }
+    extractions = {
+        row.id: row.fields
+        for row in db.execute(
+            select(Extraction.id, Extraction.fields).where(
+                Extraction.id.in_({d.extraction_id for d in decisions if d.extraction_id})
+            )
+        )
+    }
+
+    def value(fields: dict | None, name: str) -> str | None:
+        field = (fields or {}).get(name)
+        if isinstance(field, dict) and field.get("value") is not None:
+            return str(field["value"])
+        return None
+
+    out: list[DecisionOut] = []
+    for decision in decisions:
+        fields = extractions.get(decision.extraction_id) or {}
+        summary = DecisionOut.model_validate(decision, from_attributes=True)
+        summary.filename = documents.get(decision.document_id, "")
+        summary.supplier = value(fields, "supplier")
+        summary.amount = value(fields, "total_incl_vat")
+        summary.currency = value(fields, "currency")
+        out.append(summary)
+    return out
 
 
 @router.get(
@@ -123,7 +169,6 @@ def get_decision(
     db: Session = Depends(get_db),
 ) -> DecisionDetailOut:
     decision = require_decision_access(db, decision_id, user.org_id)
-    document = db.get(SourceDocument, decision.document_id)
     extraction = (
         db.get(Extraction, decision.extraction_id)
         if decision.extraction_id is not None
@@ -131,21 +176,34 @@ def get_decision(
     )
 
     unverified = set(extraction.unverified_fields if extraction else ())
+    # Built from the same summary the queue rows use, so the header shows
+    # the supplier and amount without a second way of deriving them.
+    summary = _summarize(db, [decision])[0]
     return DecisionDetailOut(
-        **DecisionOut.model_validate(decision, from_attributes=True).model_dump(),
-        filename=document.filename if document else "",
+        **summary.model_dump(),
+        document_text=extraction.document_text if extraction else "",
         unverified_fields=sorted(unverified),
         arithmetic_ok=extraction.arithmetic_ok if extraction else True,
         arithmetic_failures=list(extraction.arithmetic_failures) if extraction else [],
-        fields=_flatten_fields(extraction.fields if extraction else {}, unverified),
+        fields=_flatten_fields(
+            extraction.fields if extraction else {},
+            unverified,
+            extraction.schema_name if extraction else "",
+        ),
     )
 
 
-def _flatten_fields(fields: dict, unverified: set[str]) -> list[ExtractedFieldOut]:
+def _flatten_fields(
+    fields: dict, unverified: set[str], schema_name: str = ""
+) -> list[ExtractedFieldOut]:
     """Turn the stored extraction into rows the detail screen can render.
 
     Walks nested models and lists the same way the verifier does, so a
     field's path here is the path that appears in `unverified_fields`.
+
+    Ordered by the schema's own field order, because JSONB does not preserve
+    key order and a reviewer scanning top-down should meet the supplier and
+    the total before fifteen line-item components.
     """
     out: list[ExtractedFieldOut] = []
 
@@ -168,7 +226,11 @@ def _flatten_fields(fields: dict, unverified: set[str]) -> list[ExtractedFieldOu
             for index, item in enumerate(value):
                 walk(item, f"{path}.{index}")
 
+    order = {name: index for index, name in enumerate(field_order(schema_name))}
     walk(fields, "")
+    # Unknown roots sort last, stably, so an extra field never displaces the
+    # ones a reviewer is looking for.
+    out.sort(key=lambda row: order.get(row.name.split(".")[0], len(order)))
     return out
 
 
