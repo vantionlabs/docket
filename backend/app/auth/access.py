@@ -10,7 +10,7 @@ import uuid
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.db.models import ChatThread, SourceDocument
+from app.db.models import ChatThread, Decision, SourceDocument
 
 
 def require_thread_access(db: Session, thread_id: uuid.UUID, user_id: uuid.UUID) -> ChatThread:
@@ -27,3 +27,10 @@ def require_document_access(
     if doc is None or doc.user_id != user_id:
         raise HTTPException(status_code=404, detail="Document not found")
     return doc
+
+
+def require_decision_access(db: Session, decision_id: uuid.UUID, user_id: uuid.UUID) -> Decision:
+    decision = db.get(Decision, decision_id)
+    if decision is None or decision.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Decision not found")
+    return decision

@@ -12,12 +12,19 @@ turn a route_for_approval into an auto_approve, which is why this is the
 last thing that touches an outcome.
 """
 
+import uuid
 from dataclasses import dataclass, field
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from app.decisions.decide import DecisionResult
 from app.decisions.models import Outcome
 from app.extraction.schemas.invoice import Invoice
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+    from app.db.models import Rule as RuleRow
 
 
 @dataclass
@@ -141,3 +148,47 @@ def apply_rails(
         rail_notes=notes,
         citations=[(index, clause.ref, excerpt) for index, clause, excerpt in result.cited],
     )
+
+
+def from_row(row: "RuleRow") -> AutoApproveRule:
+    """Build the rail-3 gate from a `rules` row.
+
+    Unknown or missing conditions are not permissive. A rule with no
+    `max_total_incl_vat` gets a limit of zero rather than infinity, so a
+    half-configured rule approves nothing instead of everything.
+    """
+    conditions = row.conditions or {}
+    return AutoApproveRule(
+        name=row.name,
+        max_total_incl_vat=Decimal(str(conditions.get("max_total_incl_vat", "0"))),
+        approved_suppliers=frozenset(conditions.get("approved_suppliers") or ()),
+        require_po=bool(conditions.get("require_po", True)),
+        active=bool(row.active and row.auto_approve),
+    )
+
+
+def rule_for(db: "Session", org_id: "uuid.UUID | None", schema_name: str) -> AutoApproveRule | None:
+    """The active auto-approve rule for this org and schema, if any.
+
+    Returns None when nothing is configured, which is the v1 default and
+    means everything queues (spec section 4). Where several rules match,
+    the newest wins; a client with two overlapping rules has a
+    configuration problem, and silently picking the most permissive one
+    would hide it.
+    """
+    from sqlalchemy import select
+
+    from app.db.models import Rule as RuleRow
+
+    row = db.scalar(
+        select(RuleRow)
+        .where(
+            RuleRow.org_id == org_id,
+            RuleRow.schema_name == schema_name,
+            RuleRow.active.is_(True),
+            RuleRow.auto_approve.is_(True),
+        )
+        .order_by(RuleRow.created_at.desc())
+        .limit(1)
+    )
+    return from_row(row) if row is not None else None

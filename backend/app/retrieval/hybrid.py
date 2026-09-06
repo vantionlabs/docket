@@ -6,6 +6,12 @@ chunks are hydrated together with their ±radius neighbors (by chunk_index)
 so the agent sees enough surrounding context to ground an answer.
 
 Every query filters on user_id: retrieval never crosses user boundaries.
+
+It also filters on `collection` (spec section 8). Policy text and the
+documents being decided live in the same tables and must never retrieve
+each other: a policy question that returns an invoice is wrong, and an
+invoice that quietly becomes policy is worse. `collection=None` searches
+everything, which is what open chat wants and what a decision must never do.
 """
 
 import uuid
@@ -16,6 +22,7 @@ from sqlalchemy import text
 
 from app.config import settings
 from app.db.engine import SessionLocal
+from app.db.models import Collection
 from app.retrieval.embeddings import embed_query
 
 
@@ -29,28 +36,51 @@ class RetrievedChunk:
     is_neighbor: bool = False
 
 
-def _vector_search(user_id: uuid.UUID, query_embedding: list[float], k: int) -> list[uuid.UUID]:
+def _collection_clause(collection: Collection | None) -> str:
+    """The SQL fragment, and the one place the filter is spelled."""
+    return "" if collection is None else "AND c.collection = :collection "
+
+
+def _collection_params(collection: Collection | None) -> dict:
+    return {} if collection is None else {"collection": collection.value}
+
+
+def _vector_search(
+    user_id: uuid.UUID,
+    query_embedding: list[float],
+    k: int,
+    collection: Collection | None = None,
+) -> list[uuid.UUID]:
     with SessionLocal() as db:
         rows = db.execute(
             text(
-                "SELECT id FROM document_chunks "
-                "WHERE user_id = :user_id "
-                "ORDER BY embedding <=> CAST(:embedding AS vector) "
+                "SELECT c.id FROM document_chunks c "
+                "WHERE c.user_id = :user_id "
+                + _collection_clause(collection)
+                + "ORDER BY c.embedding <=> CAST(:embedding AS vector) "
                 "LIMIT :k"
             ),
-            {"user_id": user_id, "embedding": str(query_embedding), "k": k},
+            {
+                "user_id": user_id,
+                "embedding": str(query_embedding),
+                "k": k,
+                **_collection_params(collection),
+            },
         ).fetchall()
         return [row.id for row in rows]
 
 
-def _fts_search(user_id: uuid.UUID, query: str, k: int) -> list[uuid.UUID]:
+def _fts_search(
+    user_id: uuid.UUID, query: str, k: int, collection: Collection | None = None
+) -> list[uuid.UUID]:
     with SessionLocal() as db:
         rows = db.execute(
             text(
-                "SELECT id FROM document_chunks "
-                "WHERE user_id = :user_id "
-                "AND fts @@ plainto_tsquery(:config, :query) "
-                "ORDER BY ts_rank_cd(fts, plainto_tsquery(:config, :query)) DESC "
+                "SELECT c.id FROM document_chunks c "
+                "WHERE c.user_id = :user_id "
+                + _collection_clause(collection)
+                + "AND c.fts @@ plainto_tsquery(:config, :query) "
+                "ORDER BY ts_rank_cd(c.fts, plainto_tsquery(:config, :query)) DESC "
                 "LIMIT :k"
             ),
             {
@@ -58,6 +88,7 @@ def _fts_search(user_id: uuid.UUID, query: str, k: int) -> list[uuid.UUID]:
                 "query": query,
                 "k": k,
                 "config": settings.retrieval_fts_config,
+                **_collection_params(collection),
             },
         ).fetchall()
         return [row.id for row in rows]
@@ -72,7 +103,12 @@ def rrf_fuse(rankings: list[list[uuid.UUID]], k: int) -> list[uuid.UUID]:
     return sorted(scores, key=lambda cid: scores[cid], reverse=True)
 
 
-def _hydrate(user_id: uuid.UUID, chunk_ids: list[uuid.UUID], radius: int) -> list[RetrievedChunk]:
+def _hydrate(
+    user_id: uuid.UUID,
+    chunk_ids: list[uuid.UUID],
+    radius: int,
+    collection: Collection | None = None,
+) -> list[RetrievedChunk]:
     if not chunk_ids:
         return []
     with SessionLocal() as db:
@@ -80,9 +116,10 @@ def _hydrate(user_id: uuid.UUID, chunk_ids: list[uuid.UUID], radius: int) -> lis
             text(
                 "SELECT c.id, c.document_id, c.chunk_index, c.content, d.filename "
                 "FROM document_chunks c JOIN source_documents d ON d.id = c.document_id "
-                "WHERE c.id = ANY(:ids) AND c.user_id = :user_id"
+                "WHERE c.id = ANY(:ids) AND c.user_id = :user_id "
+                + _collection_clause(collection)
             ),
-            {"ids": chunk_ids, "user_id": user_id},
+            {"ids": chunk_ids, "user_id": user_id, **_collection_params(collection)},
         ).fetchall()
 
         chunks = {
@@ -104,9 +141,15 @@ def _hydrate(user_id: uuid.UUID, chunk_ids: list[uuid.UUID], radius: int) -> lis
                     "JOIN source_documents d ON d.id = c.document_id "
                     "JOIN document_chunks p ON p.document_id = c.document_id "
                     "WHERE p.id = ANY(:ids) AND c.user_id = :user_id "
-                    "AND abs(c.chunk_index - p.chunk_index) <= :radius AND c.id != p.id"
+                    + _collection_clause(collection)
+                    + "AND abs(c.chunk_index - p.chunk_index) <= :radius AND c.id != p.id"
                 ),
-                {"ids": chunk_ids, "user_id": user_id, "radius": radius},
+                {
+                    "ids": chunk_ids,
+                    "user_id": user_id,
+                    "radius": radius,
+                    **_collection_params(collection),
+                },
             ).fetchall()
             for row in neighbor_rows:
                 if row.id not in chunks:
@@ -128,25 +171,36 @@ def _hydrate(user_id: uuid.UUID, chunk_ids: list[uuid.UUID], radius: int) -> lis
     return ordered + neighbors
 
 
-def hybrid_search(user_id: uuid.UUID, query: str) -> list[RetrievedChunk]:
+def hybrid_search(
+    user_id: uuid.UUID,
+    query: str,
+    collection: Collection | None = None,
+    top_k: int | None = None,
+) -> list[RetrievedChunk]:
+    """Retrieve for `user_id`, optionally confined to one collection.
+
+    A decision must always pass `collection=Collection.policy`. Open chat
+    passes nothing, which searches everything, and that is the right
+    default for chat and the wrong one for a decision.
+    """
     candidate_k = settings.retrieval_candidate_k
     with ThreadPoolExecutor(max_workers=2) as pool:
         embedding_future = pool.submit(embed_query, query)
-        fts_future = pool.submit(_fts_search, user_id, query, candidate_k)
-        vector_ids = _vector_search(user_id, embedding_future.result(), candidate_k)
+        fts_future = pool.submit(_fts_search, user_id, query, candidate_k, collection)
+        vector_ids = _vector_search(user_id, embedding_future.result(), candidate_k, collection)
         fts_ids = fts_future.result()
 
     fused = rrf_fuse([vector_ids, fts_ids], k=settings.retrieval_rrf_k)
-    top_k = settings.retrieval_top_k
+    limit = top_k if top_k is not None else settings.retrieval_top_k
     radius = settings.retrieval_neighbor_radius
 
     if not settings.rerank_enabled:
-        return _hydrate(user_id, fused[:top_k], radius)
+        return _hydrate(user_id, fused[:limit], radius, collection)
 
     # Rerank: hydrate a wider candidate pool (no neighbors), reorder by
     # relevance to the query, keep top_k, then expand neighbors for those.
     from app.retrieval.rerank import rerank
 
-    candidates = _hydrate(user_id, fused[: settings.rerank_candidates], radius=0)
-    best = rerank(query, candidates, top_k)
-    return _hydrate(user_id, [c.id for c in best], radius)
+    candidates = _hydrate(user_id, fused[: settings.rerank_candidates], 0, collection)
+    best = rerank(query, candidates, limit)
+    return _hydrate(user_id, [c.id for c in best], radius, collection)

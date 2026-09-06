@@ -100,3 +100,74 @@ architecture together across projects and agents.
 
 ## Copy & docs
 - No em dashes in user-facing copy. Plain language over cleverness.
+
+---
+
+# Docket conventions (added on top of the template's)
+
+Docket is the template plus a decision pipeline. The rules above still
+hold; these are the ones the pipeline adds. `docket-spec.md` is the scope,
+and section numbers below point into it.
+
+## The rails are the product (section 9)
+- Three hard rails live in `app/decisions/rails.py` and they only ever move
+  a decision TOWARD a human. Nothing may promote an outcome. If you find
+  yourself writing code that turns a review into an approval, stop.
+- A decision that fails grounding never executes. Any unverified extracted
+  field forces review. Auto-approve is authorised by an explicit rule row,
+  never by model confidence, and never by a person approving one case.
+- Outcomes come from the closed `Outcome` enum, enforced again by a check
+  constraint. A model that can invent an outcome can invent one nobody has
+  a process for.
+
+## Provenance
+- Every extracted field is an `ExtractedField` carrying the verbatim
+  `source_span` it was read from, and `app/extraction/provenance.py`
+  checks each span against the document. There is ONE verbatim check,
+  `app/grounding/verbatim.py`, shared by answer citations, field spans and
+  policy excerpts. Do not write a second one.
+- Arithmetic is checked in code (`app/extraction/arithmetic.py`), never by
+  the model. A model asked to add up a column will sometimes add it up
+  wrong, and there is no reason to ask.
+
+## Collections (section 8)
+- `source_documents` and `document_chunks` carry a `collection`
+  (`policy` | `transactional`). A decision retrieves with
+  `collection=Collection.policy`, always. Open chat may pass nothing.
+- Never widen a decision's retrieval to search everything. The invoice
+  being decided must not be citable as the policy that justifies it.
+
+## The split at the human boundary (section 6)
+- Workflows do not suspend. The decide workflow ends by writing a
+  `decisions` row and returning; the event row is the durable checkpoint.
+  If you are reaching for a wait state, split the workflow instead.
+- Both approval paths (the router's auto-approve and a reviewer's POST)
+  go through `app/decisions/approval.py::emit_execute`. One execution
+  path. Do not add a second way to reach a side effect.
+
+## Side effects (section 10)
+- The `executions` row is written with its unique idempotency key BEFORE
+  the outbound call. A retry that finds a succeeded row returns it and
+  calls nothing. The unique constraint is the guarantee; the code around
+  it is not.
+- Adapters live in `app/adapters/`, behind the `Adapter` protocol.
+  `DryRunAdapter` is the default and is what demos run on, so an
+  unconfigured deployment does nothing rather than guessing which real
+  system to call. Add a client adapter; do not build a marketplace.
+- The idempotency key is derived (`execution_key`), never generated.
+
+## Evals (section 13)
+- The two error types are not symmetric. CI gates on false auto-approves
+  at zero. False escalations are a cost number, not a gate.
+- Retrieval recall on the policy corpus is a first-class metric, not a
+  tuning detail: the rails catch a decision that cites badly, and nothing
+  catches a decision that was never asked the right question. See
+  `docs/m1-spike-findings.md`.
+
+## Backport (section 14)
+- Some of this belongs to the template, on purpose: `collection` scoping,
+  orgs and role-scoped access, the provenance base classes and verbatim
+  check, the adapter protocol and `DryRunAdapter`, and the split-at-the-
+  human-boundary pattern as documentation. Backport at the end of M3, once
+  it has survived contact. The invoice schema, the procurement rules, the
+  adapters and the review UI stay here.

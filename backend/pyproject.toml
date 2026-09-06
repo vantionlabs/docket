@@ -53,8 +53,10 @@ target-version = "py312"
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.ruff.lint.flake8-bugbear]
-# FastAPI's dependency-injection idiom: Depends(...) in argument defaults.
-extend-immutable-calls = ["fastapi.Depends", "fastapi.security.HTTPBearer"]
+# FastAPI's dependency-injection idiom: Depends(...) / Query(...) in
+# argument defaults. Same reasoning for both: FastAPI reads them at import
+# time to build the OpenAPI schema, and they are never mutated.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.security.HTTPBearer"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

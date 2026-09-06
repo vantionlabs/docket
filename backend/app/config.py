@@ -113,6 +113,15 @@ class Settings(BaseSettings):
     """Max chat turns per user per window (chat is the costly path)."""
     chat_rate_window_seconds: int = 60
 
+    # --- execution (Docket: the system-of-record adapter) ---
+    execution_adapter: str = "dry_run"
+    """dry_run | email | a client adapter registered in app/adapters/.
+    Defaults to dry_run: an unconfigured deployment must do nothing, not
+    guess which real system to call."""
+    execution_email_to: str = ""
+    """Where the email adapter sends approved instructions. Falls back to
+    EMAIL_FROM so a misconfigured send is visible rather than silent."""
+
     # --- email (Resend; no-ops when unset) ---
     resend_api_key: str = ""
     email_from: str = "noreply@example.com"

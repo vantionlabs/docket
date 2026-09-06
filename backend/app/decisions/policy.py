@@ -2,23 +2,27 @@
 
 Spec section 8. The decision is grounded in policy, never in the document
 being decided, so these two bodies of text must not be able to reach each
-other. In the built pipeline that separation is a `collection` column on
-`source_documents` and a filter in `hybrid_search`. Here in the M1 spike
-it is simpler and stricter: the policy is a markdown file loaded into
-memory, and the invoice is never in it.
+other. Two implementations of one seam, `PolicySource`:
 
-Retrieval is lexical, deliberately. The spike exists to find out whether
-extraction and the policy check hold up on real documents, and pgvector
-plus an embedding bill would not make that question easier to answer.
-M2 swaps `PolicyCorpus.retrieve` for `hybrid_search(..., collection="policy")`
-and nothing above it changes.
+  - `PolicyCorpus` loads a markdown file into memory and retrieves
+    lexically. It needs no database and no embedding bill, which is what
+    the M1 spike wanted and what the tests still want.
+  - `RetrievedPolicy` goes through `hybrid_search(..., collection=policy)`,
+    which is the built pipeline: pgvector plus FTS, fused with RRF, with
+    the collection filter making the separation a database constraint
+    rather than a convention.
+
+Everything above this file takes a `PolicySource` and cannot tell the
+difference, which is the point: swapping the corpus is configuration.
 """
 
 import math
 import re
+import uuid
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
 _WORD = re.compile(r"[a-z0-9]+")
@@ -30,14 +34,25 @@ _STOPWORDS = frozenset(
 @dataclass(frozen=True)
 class PolicyClause:
     id: str
-    """Stable within a corpus load, and what a citation must name."""
+    """What a citation must name. A chunk id when the clause came from the
+    database, a synthetic `clause-n` when it came from a markdown file."""
     ref: str
     """Human-readable reference, e.g. '4.2 Spend thresholds'."""
     text: str
     """The clause body, heading included, exactly as written."""
+    chunk_id: uuid.UUID | None = None
+    document_id: uuid.UUID | None = None
+    """Set when the clause came from retrieval, so a citation can be stored
+    pointing at the row it quoted."""
 
     def cite_block(self) -> str:
         return f"[{self.id}] {self.ref}\n{self.text}"
+
+
+class PolicySource(Protocol):
+    """Anything that can hand back citable policy clauses for a query."""
+
+    def retrieve(self, query: str, top_k: int = 8) -> list[PolicyClause]: ...
 
 
 def _tokens(text: str) -> list[str]:
@@ -113,3 +128,53 @@ class PolicyCorpus:
 
         scored.sort(key=lambda pair: (-pair[0], pair[1].id))
         return [clause for _, clause in scored[:top_k]]
+
+
+class RetrievedPolicy:
+    """The built pipeline's policy source: hybrid retrieval, policy only.
+
+    The `collection=policy` filter is not a convenience. It is the thing
+    that stops an invoice from being cited as if it were policy, and it
+    runs in the database rather than in a comment.
+
+    A retrieved chunk is a chunk, not a clause, so `ref` is built from the
+    filename and the chunk's position. When the policy corpus is chunked
+    from markdown that reads close enough to a clause reference; when it
+    is not, that is a chunking problem, and pretending otherwise in this
+    file would only hide it.
+    """
+
+    def __init__(self, user_id: uuid.UUID) -> None:
+        self.user_id = user_id
+
+    def retrieve(self, query: str, top_k: int = 8) -> list[PolicyClause]:
+        from app.db.models import Collection
+        from app.retrieval.hybrid import hybrid_search
+
+        chunks = hybrid_search(
+            self.user_id, query, collection=Collection.policy, top_k=top_k
+        )
+        return [
+            PolicyClause(
+                id=str(chunk.id),
+                ref=_clause_ref(chunk.filename, chunk.content, chunk.chunk_index),
+                text=chunk.content,
+                chunk_id=chunk.id,
+                document_id=chunk.document_id,
+            )
+            for chunk in chunks
+        ]
+
+
+def _clause_ref(filename: str, content: str, chunk_index: int) -> str:
+    """A reference a human can find in the source document.
+
+    Prefers the first markdown heading in the chunk, because that is what
+    the clause is actually called. Falls back to the chunk position, which
+    is honest about being a position.
+    """
+    for line in content.splitlines():
+        match = _HEADING.match(line.strip())
+        if match:
+            return f"{filename}, {match.group(2).strip()}"
+    return f"{filename}, part {chunk_index + 1}"

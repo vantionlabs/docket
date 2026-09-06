@@ -18,15 +18,17 @@ from fastapi_users.db import SQLAlchemyBaseUserTableUUID
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     DateTime,
     Enum,
     ForeignKey,
     Integer,
+    Numeric,
     Text,
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from app.config import settings
@@ -45,6 +47,18 @@ def _user_fk(*, nullable: bool = False, ondelete: str = "CASCADE") -> Mapped:
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete=ondelete),
         nullable=nullable,
+    )
+
+
+def _org_fk(*, nullable: bool = True) -> Mapped:
+    """Tenant key. Nullable until M3 wires orgs into the auth seam (spec
+    section 11); the columns exist from the start so the tables never have
+    to be rewritten under live data."""
+    return mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=nullable,
+        index=True,
     )
 
 
@@ -100,11 +114,29 @@ class DocumentStatus(enum.StrEnum):
     failed = "failed"
 
 
+class Collection(enum.StrEnum):
+    """Which body of text a document belongs to (spec section 8).
+
+    Policy and transactional documents must never retrieve each other: a
+    policy question that returns an invoice is wrong, and an invoice that
+    quietly becomes policy is worse. Retrieval filters on this.
+    """
+
+    policy = "policy"
+    transactional = "transactional"
+
+
 class SourceDocument(Base):
     __tablename__ = "source_documents"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
     user_id: Mapped[uuid.UUID] = _user_fk()
+    org_id: Mapped[uuid.UUID | None] = _org_fk()
+    collection: Mapped[Collection] = mapped_column(
+        Enum(Collection, name="collection", native_enum=False, length=20),
+        default=Collection.transactional,
+        index=True,
+    )
     filename: Mapped[str] = mapped_column(Text)
     r2_key: Mapped[str] = mapped_column(Text, unique=True)
     content_type: Mapped[str] = mapped_column(Text)
@@ -131,6 +163,12 @@ class DocumentChunk(Base):
         ForeignKey("source_documents.id", ondelete="CASCADE")
     )
     user_id: Mapped[uuid.UUID] = _user_fk()
+    org_id: Mapped[uuid.UUID | None] = _org_fk()
+    collection: Mapped[Collection] = mapped_column(
+        Enum(Collection, name="collection", native_enum=False, length=20),
+        default=Collection.transactional,
+        index=True,
+    )
     chunk_index: Mapped[int] = mapped_column(Integer)
     content: Mapped[str] = mapped_column(Text)
     embedding: Mapped[list[float]] = mapped_column(Vector(settings.embedding_dimensions))
@@ -227,3 +265,244 @@ class Event(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
+
+
+# --- Docket domain (spec section 12) ------------------------------------
+#
+# `decisions` plus `decision_citations` plus `executions` is the audit
+# trail. One join answers "why was this paid, on whose authority, citing
+# what", which is the question an auditor asks a year later about the one
+# invoice that turned out to be wrong.
+
+
+class Role(enum.StrEnum):
+    owner = "owner"
+    reviewer = "reviewer"
+    viewer = "viewer"
+
+
+class Organization(Base):
+    __tablename__ = "organizations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+    memberships: Mapped[list["Membership"]] = relationship(
+        back_populates="organization", cascade="all, delete-orphan"
+    )
+
+
+class Membership(Base):
+    """Who may act in an org, and how far their authority runs.
+
+    `approval_limit` is the amount this member may approve on their own
+    (spec section 11). It is authority, not a preference, so it lives on
+    the membership rather than on the user.
+    """
+
+    __tablename__ = "memberships"
+    __table_args__ = (UniqueConstraint("org_id", "user_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    org_id: Mapped[uuid.UUID] = _org_fk(nullable=False)
+    user_id: Mapped[uuid.UUID] = _user_fk()
+    role: Mapped[Role] = mapped_column(
+        Enum(Role, name="membership_role", native_enum=False, length=20), default=Role.viewer
+    )
+    approval_limit: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+    organization: Mapped[Organization] = relationship(back_populates="memberships")
+
+
+class Intake(Base):
+    """How a document arrived. `external_ref` is the dedupe key: the same
+    webhook delivered twice, or the same email pulled twice, is one intake."""
+
+    __tablename__ = "intakes"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    org_id: Mapped[uuid.UUID | None] = _org_fk()
+    source: Mapped[str] = mapped_column(Text)  # webhook | schedule | upload | email
+    external_ref: Mapped[str | None] = mapped_column(Text, nullable=True, unique=True)
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("source_documents.id", ondelete="CASCADE"), index=True
+    )
+    received_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    raw: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+
+class Extraction(Base):
+    """One extraction run over one document.
+
+    `fields` is the typed model as JSON, spans included, so the detail
+    screen can highlight a value's source text without re-running anything.
+    `unverified_fields` is what rail 2 acts on.
+    """
+
+    __tablename__ = "extractions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    org_id: Mapped[uuid.UUID | None] = _org_fk()
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("source_documents.id", ondelete="CASCADE"), index=True
+    )
+    schema_name: Mapped[str] = mapped_column(Text)  # e.g. "invoice"
+    fields: Mapped[dict] = mapped_column(JSONB, default=dict)
+    unverified_fields: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)
+    arithmetic_ok: Mapped[bool] = mapped_column(Boolean, default=True)
+    arithmetic_failures: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)
+    model: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class DecisionStatus(enum.StrEnum):
+    pending_review = "pending_review"
+    approved = "approved"
+    rejected = "rejected"
+    executed = "executed"
+    failed = "failed"
+
+
+class Decision(Base):
+    """The row the whole product is about.
+
+    `outcome` is what the pipeline decided. `status` is where the case has
+    got to. They are separate because a reviewer can approve a decision
+    whose outcome was `reject`, and the disagreement is the point: the
+    original stays, the override sits beside it, and the gap between them
+    is measurable per rule (spec section 9).
+    """
+
+    __tablename__ = "decisions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    org_id: Mapped[uuid.UUID | None] = _org_fk()
+    user_id: Mapped[uuid.UUID] = _user_fk()
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("source_documents.id", ondelete="CASCADE"), index=True
+    )
+    extraction_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("extractions.id", ondelete="SET NULL"), nullable=True
+    )
+
+    outcome: Mapped[str] = mapped_column(Text)  # app.decisions.models.Outcome
+    rationale: Mapped[str] = mapped_column(Text, default="")
+    unmet_conditions: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)
+    rail_notes: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)
+    """Why the rails moved the outcome, in the reviewer's words. Not in the
+    spec's column list; added because it is the first thing a reviewer needs
+    to know and deriving it later would mean re-running the decision."""
+
+    rule_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    grounding_passed: Mapped[bool] = mapped_column(Boolean, default=False)
+    grounding_failure: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    status: Mapped[DecisionStatus] = mapped_column(
+        Enum(DecisionStatus, name="decision_status", native_enum=False, length=20),
+        default=DecisionStatus.pending_review,
+        index=True,
+    )
+    assigned_to: Mapped[str | None] = mapped_column(Text, nullable=True)
+    """A cost centre or role, never a person (spec section 9)."""
+
+    decided_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    reviewed_by: Mapped[uuid.UUID | None] = _user_fk(nullable=True, ondelete="SET NULL")
+    reviewed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    override_outcome: Mapped[str | None] = mapped_column(Text, nullable=True)
+    override_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+    citations: Mapped[list["DecisionCitation"]] = relationship(
+        back_populates="decision",
+        cascade="all, delete-orphan",
+        order_by="DecisionCitation.citation_index",
+    )
+
+    @property
+    def effective_outcome(self) -> str:
+        """What actually happened: the reviewer's call when they made one."""
+        return self.override_outcome or self.outcome
+
+
+class DecisionCitation(Base):
+    """A policy clause that justified a decision, quoted verbatim.
+
+    `chunk_id` is nullable because a decision can be grounded in an
+    in-memory corpus (the spike, and tests) as well as a retrieved one.
+    The excerpt and clause_ref are what an auditor reads either way.
+    """
+
+    __tablename__ = "decision_citations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    decision_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("decisions.id", ondelete="CASCADE"), index=True
+    )
+    chunk_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("document_chunks.id", ondelete="SET NULL"), nullable=True
+    )
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("source_documents.id", ondelete="SET NULL"), nullable=True
+    )
+    citation_index: Mapped[int] = mapped_column(Integer)  # 1-based [n] marker
+    clause_ref: Mapped[str] = mapped_column(Text)
+    excerpt: Mapped[str] = mapped_column(Text)
+
+    decision: Mapped[Decision] = relationship(back_populates="citations")
+
+
+class Rule(Base):
+    """The explicit gate of rail 3, per org.
+
+    `auto_approve` defaults to false and stays false until the eval set
+    says otherwise (spec section 13). A rule with `auto_approve` false is
+    still useful: it names the approver.
+    """
+
+    __tablename__ = "rules"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    org_id: Mapped[uuid.UUID | None] = _org_fk()
+    name: Mapped[str] = mapped_column(Text)
+    schema_name: Mapped[str] = mapped_column(Text, default="invoice")
+    conditions: Mapped[dict] = mapped_column(JSONB, default=dict)
+    auto_approve: Mapped[bool] = mapped_column(Boolean, default=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class ExecutionStatus(enum.StrEnum):
+    pending = "pending"
+    succeeded = "succeeded"
+    failed = "failed"
+
+
+class Execution(Base):
+    """One outbound side effect, with the key that makes retrying it safe.
+
+    The row is written BEFORE the outbound call (spec section 10). A retry
+    that finds a completed row returns it and calls nothing, which is the
+    difference between an at-least-once event engine and paying a supplier
+    twice.
+    """
+
+    __tablename__ = "executions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    org_id: Mapped[uuid.UUID | None] = _org_fk()
+    decision_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("decisions.id", ondelete="CASCADE"), index=True
+    )
+    adapter: Mapped[str] = mapped_column(Text)
+    idempotency_key: Mapped[str] = mapped_column(Text, unique=True)
+    request: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    response: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    status: Mapped[ExecutionStatus] = mapped_column(
+        Enum(ExecutionStatus, name="execution_status", native_enum=False, length=20),
+        default=ExecutionStatus.pending,
+    )
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
