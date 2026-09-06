@@ -1,0 +1,6 @@
+{"question": "How many vacation days do full-time employees get?", "expect_substrings": ["25"], "expect_filename": "company-handbook.md"}
+{"question": "How many vacation days can roll over to next year?", "expect_substrings": ["10"], "expect_filename": "company-handbook.md"}
+{"question": "How many days a week can I work remotely?", "expect_substrings": ["three", "3"], "expect_filename": "company-handbook.md"}
+{"question": "Do I need a receipt for a 20 euro expense?", "expect_substrings": ["without a receipt", "under 50", "no"], "expect_filename": "company-handbook.md"}
+{"question": "How often do passwords rotate?", "expect_substrings": ["90"], "expect_filename": "company-handbook.md"}
+{"question": "What is the company's parental leave policy?", "expect_insufficient": true}
