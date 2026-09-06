@@ -23,6 +23,7 @@ from pydantic_ai import Agent
 from app.agent.output import GroundedAnswer
 from app.config import settings
 from app.grounding.turn_registry import TurnRegistry
+from app.grounding.verbatim import contains_verbatim
 from app.llm.providers import grounding_model
 from app.logging import get_logger
 
@@ -45,10 +46,6 @@ class ValidationResult:
     ok: bool
     reason: str = ""
     citations: list[ValidatedCitation] | None = None
-
-
-def _normalize(text: str) -> str:
-    return " ".join(text.split()).lower()
 
 
 class _JudgeDecision(BaseModel):
@@ -130,7 +127,7 @@ def validate(
             return ValidationResult(
                 ok=False, reason=f"citation [{citation.index}] cites an unretrieved chunk"
             )
-        if _normalize(citation.excerpt) not in _normalize(chunk.content):
+        if not contains_verbatim(citation.excerpt, chunk.content):
             return ValidationResult(
                 ok=False, reason=f"citation [{citation.index}] excerpt not found in chunk"
             )
