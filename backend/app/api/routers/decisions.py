@@ -12,6 +12,7 @@ one execution.
 
 import uuid
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
@@ -29,6 +30,7 @@ from app.api.schemas import (
 )
 from app.auth.access import require_decision_access
 from app.auth.dependencies import CurrentUser, get_current_user
+from app.auth.orgs import APPROVERS
 from app.db.engine import get_db
 from app.db.models import Decision, DecisionStatus, Extraction, SourceDocument
 from app.decisions.approval import emit_execute
@@ -60,7 +62,7 @@ def list_decisions(
 ) -> list[Decision]:
     stmt = (
         select(Decision)
-        .where(Decision.user_id == user.id)
+        .where(Decision.org_id == user.org_id)
         .options(selectinload(Decision.citations))
         .order_by(Decision.created_at.asc())
         .limit(limit)
@@ -85,7 +87,7 @@ def decision_stats(
 ) -> dict:
     def count(*where) -> int:
         return db.scalar(
-            select(func.count()).select_from(Decision).where(Decision.user_id == user.id, *where)
+            select(func.count()).select_from(Decision).where(Decision.org_id == user.org_id, *where)
         ) or 0
 
     total = count()
@@ -120,7 +122,7 @@ def get_decision(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> DecisionDetailOut:
-    decision = require_decision_access(db, decision_id, user.id)
+    decision = require_decision_access(db, decision_id, user.org_id)
     document = db.get(SourceDocument, decision.document_id)
     extraction = (
         db.get(Extraction, decision.extraction_id)
@@ -190,7 +192,7 @@ def approve_decision(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> ApprovalResponse:
-    decision = require_decision_access(db, decision_id, user.id)
+    decision = require_decision_access(db, decision_id, user.org_id)
 
     # Already approved: return the existing event rather than 409. A retried
     # request is not an error, and the event layer dedupes it anyway.
@@ -199,6 +201,8 @@ def approve_decision(
 
     if decision.status is not DecisionStatus.pending_review:
         raise HTTPException(409, f"Decision is {decision.status}, not awaiting review")
+
+    _require_authority(db, user, decision)
 
     if body.override_outcome is not None:
         _validate_override(body.override_outcome)
@@ -233,13 +237,19 @@ def reject_decision(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> ApprovalResponse:
-    decision = require_decision_access(db, decision_id, user.id)
+    decision = require_decision_access(db, decision_id, user.org_id)
 
     if decision.status is DecisionStatus.rejected:
         return ApprovalResponse(decision_id=decision.id, status=str(decision.status))
 
     if decision.status is not DecisionStatus.pending_review:
         raise HTTPException(409, f"Decision is {decision.status}, not awaiting review")
+
+    # Rejecting is an act on the case too, and a viewer may not perform it.
+    # The amount limit does not apply: refusing to pay is never the risk a
+    # ceiling exists to contain.
+    if user.role not in APPROVERS:
+        raise HTTPException(403, f"A {user.role} may not reject decisions")
 
     decision.status = DecisionStatus.rejected
     decision.override_outcome = str(Outcome.reject)
@@ -248,6 +258,49 @@ def reject_decision(
     decision.reviewed_at = datetime.now(UTC)
     db.commit()
     return ApprovalResponse(decision_id=decision.id, status=str(decision.status))
+
+
+def decision_amount(db: Session, decision: Decision) -> Decimal | None:
+    """What this decision is worth, for the approval-limit check.
+
+    Read from the extraction row rather than recomputed. An amount that
+    could not be read comes back None, and a member with a ceiling cannot
+    approve it: "we could not read the total" is not evidence that the
+    total is under the limit.
+    """
+    if decision.extraction_id is None:
+        return None
+    extraction = db.get(Extraction, decision.extraction_id)
+    if extraction is None:
+        return None
+    field = (extraction.fields or {}).get("total_incl_vat")
+    if not isinstance(field, dict) or field.get("value") is None:
+        return None
+    try:
+        return Decimal(str(field["value"]))
+    except (ArithmeticError, ValueError):
+        return None
+
+
+def _require_authority(db: Session, user: CurrentUser, decision: Decision) -> None:
+    """Role plus threshold, held on the membership (spec section 11)."""
+    amount = decision_amount(db, decision)
+    if user.may_approve(amount):
+        return
+
+    if user.role not in APPROVERS:
+        raise HTTPException(403, f"A {user.role} may not approve decisions")
+    if amount is None:
+        raise HTTPException(
+            403,
+            "This decision has no readable total, so it cannot be checked against "
+            "your approval limit. Somebody without a limit has to take it.",
+        )
+    raise HTTPException(
+        403,
+        f"This decision is for {amount}, above your approval limit of "
+        f"{user.approval_limit}.",
+    )
 
 
 def _validate_override(outcome: str) -> None:

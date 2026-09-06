@@ -51,9 +51,13 @@ def _user_fk(*, nullable: bool = False, ondelete: str = "CASCADE") -> Mapped:
 
 
 def _org_fk(*, nullable: bool = True) -> Mapped:
-    """Tenant key. Nullable until M3 wires orgs into the auth seam (spec
-    section 11); the columns exist from the start so the tables never have
-    to be rewritten under live data."""
+    """Tenant key (spec section 11).
+
+    Required on Docket's own tables: nothing here can exist without a
+    tenant. It stays nullable on the template's `source_documents` and
+    `document_chunks`, because the template has no orgs and whether they
+    gain them is the backport's decision, not this project's (section 14).
+    """
     return mapped_column(
         UUID(as_uuid=True),
         ForeignKey("organizations.id", ondelete="CASCADE"),
@@ -323,7 +327,7 @@ class Intake(Base):
     __tablename__ = "intakes"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
-    org_id: Mapped[uuid.UUID | None] = _org_fk()
+    org_id: Mapped[uuid.UUID] = _org_fk(nullable=False)
     source: Mapped[str] = mapped_column(Text)  # webhook | schedule | upload | email
     external_ref: Mapped[str | None] = mapped_column(Text, nullable=True, unique=True)
     document_id: Mapped[uuid.UUID] = mapped_column(
@@ -344,7 +348,7 @@ class Extraction(Base):
     __tablename__ = "extractions"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
-    org_id: Mapped[uuid.UUID | None] = _org_fk()
+    org_id: Mapped[uuid.UUID] = _org_fk(nullable=False)
     document_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("source_documents.id", ondelete="CASCADE"), index=True
     )
@@ -378,7 +382,7 @@ class Decision(Base):
     __tablename__ = "decisions"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
-    org_id: Mapped[uuid.UUID | None] = _org_fk()
+    org_id: Mapped[uuid.UUID] = _org_fk(nullable=False)
     user_id: Mapped[uuid.UUID] = _user_fk()
     document_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("source_documents.id", ondelete="CASCADE"), index=True
@@ -464,7 +468,7 @@ class Rule(Base):
     __tablename__ = "rules"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
-    org_id: Mapped[uuid.UUID | None] = _org_fk()
+    org_id: Mapped[uuid.UUID] = _org_fk(nullable=False)
     name: Mapped[str] = mapped_column(Text)
     schema_name: Mapped[str] = mapped_column(Text, default="invoice")
     conditions: Mapped[dict] = mapped_column(JSONB, default=dict)
@@ -491,7 +495,7 @@ class Execution(Base):
     __tablename__ = "executions"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
-    org_id: Mapped[uuid.UUID | None] = _org_fk()
+    org_id: Mapped[uuid.UUID] = _org_fk(nullable=False)
     decision_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("decisions.id", ondelete="CASCADE"), index=True
     )

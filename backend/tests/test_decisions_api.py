@@ -9,6 +9,7 @@ documents it belongs to.
 
 import uuid
 from datetime import UTC, datetime
+from decimal import Decimal
 from unittest.mock import MagicMock
 
 import pytest
@@ -18,16 +19,25 @@ from fastapi.testclient import TestClient
 from app.api.routers import decisions as decisions_router
 from app.auth.dependencies import CurrentUser, get_current_user
 from app.db.engine import get_db
-from app.db.models import Collection, DecisionStatus
+from app.db.models import Collection, DecisionStatus, Role
 from app.decisions.models import Outcome
 
-USER = CurrentUser(id=uuid.uuid4(), email="reviewer@example.com")
+ORG = uuid.uuid4()
+USER = CurrentUser(
+    id=uuid.uuid4(),
+    email="reviewer@example.com",
+    org_id=ORG,
+    role=Role.owner,
+    approval_limit=None,
+)
 
 
 def _decision(status=DecisionStatus.pending_review, **overrides):
     row = MagicMock()
     row.id = overrides.get("id", uuid.uuid4())
     row.user_id = USER.id
+    row.org_id = ORG
+    row.extraction_id = None
     row.status = status
     row.override_outcome = None
     row.override_note = None
@@ -41,10 +51,14 @@ def _decision(status=DecisionStatus.pending_review, **overrides):
 
 @pytest.fixture
 def client(monkeypatch):
+    return _client(monkeypatch, USER)
+
+
+def _client(monkeypatch, user: CurrentUser):
     db = MagicMock()
     app = FastAPI()
     app.include_router(decisions_router.router)
-    app.dependency_overrides[get_current_user] = lambda: USER
+    app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
 
     emitted: list[tuple] = []
@@ -136,11 +150,97 @@ def test_unknown_override_outcome_is_rejected(client):
     assert response.status_code == 422
 
 
-def test_another_users_decision_is_not_found(client):
-    """404, not 403: the API never confirms a foreign row exists."""
-    client.db.get.return_value = _decision(user_id=uuid.uuid4())
+def test_another_orgs_decision_is_not_found(client):
+    """404, not 403: the API never confirms a foreign row exists.
+
+    Scoped by org, not user: a reviewer must be able to open a case
+    somebody else's intake created, and must not be able to open another
+    company's (spec section 11)."""
+    client.db.get.return_value = _decision(org_id=uuid.uuid4())
     response = client.post(f"/decisions/{uuid.uuid4()}/approve", json={})
     assert response.status_code == 404
+
+
+def test_a_colleague_in_the_same_org_can_approve(client):
+    """The queue is shared. That is the point of it."""
+    decision = _decision(user_id=uuid.uuid4())  # somebody else's intake
+    client.db.get.return_value = decision
+    assert client.post(f"/decisions/{decision.id}/approve", json={}).status_code == 200
+
+
+# --- approval authority: role plus threshold (spec section 11) ----------
+
+
+def _member(role, limit=None):
+    return CurrentUser(
+        id=uuid.uuid4(), email="m@example.com", org_id=ORG, role=role, approval_limit=limit
+    )
+
+
+def test_a_viewer_may_not_approve(monkeypatch):
+    client = _client(monkeypatch, _member(Role.viewer))
+    decision = _decision()
+    client.db.get.return_value = decision
+    response = client.post(f"/decisions/{decision.id}/approve", json={})
+    assert response.status_code == 403
+    assert "may not approve" in response.json()["detail"]
+    assert client.emitted == []
+
+
+def test_a_viewer_may_not_reject_either(monkeypatch):
+    """Closing a case is an act on it too."""
+    client = _client(monkeypatch, _member(Role.viewer))
+    decision = _decision()
+    client.db.get.return_value = decision
+    assert client.post(f"/decisions/{decision.id}/reject", json={}).status_code == 403
+
+
+def test_a_reviewer_may_not_approve_above_their_limit(monkeypatch):
+    client = _client(monkeypatch, _member(Role.reviewer, Decimal("1000")))
+    decision = _decision(extraction_id=uuid.uuid4())
+    extraction = MagicMock(fields={"total_incl_vat": {"value": "12196.80"}})
+    client.db.get.side_effect = lambda model, _id: (
+        decision if model.__name__ == "Decision" else extraction
+    )
+    response = client.post(f"/decisions/{decision.id}/approve", json={})
+    assert response.status_code == 403
+    assert "above your approval limit" in response.json()["detail"]
+    assert client.emitted == []
+
+
+def test_a_reviewer_may_approve_within_their_limit(monkeypatch):
+    client = _client(monkeypatch, _member(Role.reviewer, Decimal("1000")))
+    decision = _decision(extraction_id=uuid.uuid4())
+    extraction = MagicMock(fields={"total_incl_vat": {"value": "859.10"}})
+    client.db.get.side_effect = lambda model, _id: (
+        decision if model.__name__ == "Decision" else extraction
+    )
+    assert client.post(f"/decisions/{decision.id}/approve", json={}).status_code == 200
+    assert client.emitted
+
+
+def test_an_unreadable_total_cannot_be_approved_under_a_limit(monkeypatch):
+    """A ceiling exists for a reason, and "we could not read the total" is
+    not evidence that the total is under it."""
+    client = _client(monkeypatch, _member(Role.reviewer, Decimal("1000")))
+    decision = _decision(extraction_id=uuid.uuid4())
+    extraction = MagicMock(fields={"total_incl_vat": {"value": None}})
+    client.db.get.side_effect = lambda model, _id: (
+        decision if model.__name__ == "Decision" else extraction
+    )
+    response = client.post(f"/decisions/{decision.id}/approve", json={})
+    assert response.status_code == 403
+    assert "no readable total" in response.json()["detail"]
+
+
+def test_an_unlimited_member_can_take_an_unreadable_total(monkeypatch):
+    client = _client(monkeypatch, _member(Role.owner, None))
+    decision = _decision(extraction_id=uuid.uuid4())
+    extraction = MagicMock(fields={})
+    client.db.get.side_effect = lambda model, _id: (
+        decision if model.__name__ == "Decision" else extraction
+    )
+    assert client.post(f"/decisions/{decision.id}/approve", json={}).status_code == 200
 
 
 # --- reject -------------------------------------------------------------

@@ -2,8 +2,11 @@
 
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
 from pydantic import BaseModel, Field
+
+from app.db.models import Collection
 
 
 class ErrorResponse(BaseModel):
@@ -36,6 +39,14 @@ class EventOut(BaseModel):
 
 # --- documents ---
 class PresignRequest(BaseModel):
+    collection: Collection = Field(
+        default=Collection.transactional,
+        description=(
+            "`transactional` for documents to be decided, `policy` for the "
+            "rules they are decided against. They are retrieved separately "
+            "and must never mix."
+        ),
+    )
     filename: str = Field(description="Original file name.")
     content_type: str = Field(
         description="MIME type. The browser PUT must send this exact value.",
@@ -52,6 +63,7 @@ class PresignResponse(BaseModel):
 
 class DocumentOut(BaseModel):
     id: uuid.UUID
+    collection: Collection
     filename: str
     content_type: str
     size_bytes: int | None
@@ -168,3 +180,79 @@ class ApprovalResponse(BaseModel):
     event_id: uuid.UUID | None = Field(
         default=None, description="The `decision.execute` event, when one was emitted."
     )
+
+
+# --- rules (Docket) ---
+class RuleConditions(BaseModel):
+    """The conditions rail 3 checks before it lets anything through.
+
+    Absent conditions are restrictive, never permissive: a rule with no
+    `max_total_incl_vat` approves nothing rather than everything.
+    """
+
+    max_total_incl_vat: Decimal = Field(
+        default=Decimal(0), description="Inclusive ceiling. Zero approves nothing."
+    )
+    approved_suppliers: list[str] = Field(
+        default_factory=list,
+        description="Exact supplier names. Empty means the rule does not check suppliers.",
+    )
+    require_po: bool = Field(default=True, description="Require a purchase order number.")
+
+
+class RuleIn(BaseModel):
+    name: str
+    schema_name: str = Field(default="invoice")
+    conditions: RuleConditions = Field(default_factory=RuleConditions)
+    auto_approve: bool = Field(
+        default=False,
+        description=(
+            "Whether this rule may execute without a human. Off by default, "
+            "and it should stay off until the eval set says otherwise."
+        ),
+    )
+    active: bool = True
+
+
+class RuleOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    schema_name: str
+    conditions: dict
+    auto_approve: bool
+    active: bool
+    created_at: datetime
+
+
+# --- audit ---
+class ExecutionOut(BaseModel):
+    id: uuid.UUID
+    adapter: str
+    idempotency_key: str
+    status: str
+    external_reference: str | None = None
+    error: str | None = None
+    created_at: datetime
+    completed_at: datetime | None = None
+
+
+class AuditRow(BaseModel):
+    """One line of the audit log: what was decided, citing what, what fired."""
+
+    decision_id: uuid.UUID
+    document_id: uuid.UUID
+    filename: str
+    supplier: str | None = None
+    amount: str | None = None
+    currency: str | None = None
+    outcome: str
+    effective_outcome: str
+    status: str
+    rule_id: str | None = None
+    grounding_passed: bool
+    citation_count: int
+    reviewed_by_email: str | None = None
+    reviewed_at: datetime | None = None
+    override_outcome: str | None = None
+    executed_reference: str | None = None
+    created_at: datetime

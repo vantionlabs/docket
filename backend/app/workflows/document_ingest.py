@@ -83,6 +83,10 @@ class StoreChunks(Node):
             DocumentChunk(
                 document_id=doc.id,
                 user_id=doc.user_id,
+                org_id=doc.org_id,
+                # Chunks inherit the document's collection, so the retrieval
+                # filter can never disagree with the document it came from.
+                collection=doc.collection,
                 chunk_index=chunk.index,
                 content=chunk.content,
                 embedding=vector,

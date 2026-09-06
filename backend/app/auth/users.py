@@ -19,7 +19,21 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
     verification_token_secret = settings.auth_secret
 
     async def on_after_register(self, user: User, request=None) -> None:
+        """Give the new user an org they own (spec section 11).
+
+        Done here rather than lazily so the very first request already has a
+        tenant, and so a user who never uploads anything still appears in
+        the org tables rather than being invisible until they do.
+
+        fastapi-users is the one async path in this app, so the sync session
+        is opened explicitly rather than injected.
+        """
+        from app.auth.orgs import ensure_personal_org
+        from app.db.engine import SessionLocal
+
         log.info("user.registered", user_id=str(user.id))
+        with SessionLocal() as db:
+            ensure_personal_org(db, user.id, user.email)
 
     async def on_after_forgot_password(self, user: User, token: str, request=None) -> None:
         from app.email.client import send_email

@@ -43,6 +43,7 @@ from app.decisions.models import Outcome
 from app.ingestion.chunking import chunk_text
 from app.workflows.decision_execute import DecisionExecuteWorkflow
 from app.workflows.document_decide import DocumentDecideWorkflow
+from tests.integration.conftest import _purge
 
 pytestmark = pytest.mark.integration
 
@@ -72,16 +73,22 @@ def user(db):
     db.add(row)
     db.commit()
     yield row
-    # Cascades clear decisions, extractions, executions and chunks with it.
-    db.delete(row)
-    db.commit()
+    _purge(db, row)
 
 
 @pytest.fixture
-def seeded(db, user, monkeypatch):
+def org(db, user):
+    from app.auth.orgs import ensure_personal_org
+
+    return ensure_personal_org(db, user.id, user.email).org_id
+
+
+@pytest.fixture
+def seeded(db, user, org, monkeypatch):
     """A policy corpus in the database, and an invoice waiting to be decided."""
     policy_doc = SourceDocument(
         user_id=user.id,
+        org_id=org,
         collection=Collection.policy,
         filename="procurement-policy.md",
         r2_key=f"test/policy/{uuid.uuid4()}",
@@ -89,6 +96,7 @@ def seeded(db, user, monkeypatch):
     )
     invoice_doc = SourceDocument(
         user_id=user.id,
+        org_id=org,
         collection=Collection.transactional,
         filename=INVOICE.name,
         r2_key=f"test/invoice/{uuid.uuid4()}",
@@ -104,6 +112,7 @@ def seeded(db, user, monkeypatch):
             DocumentChunk(
                 document_id=policy_doc.id,
                 user_id=user.id,
+                org_id=org,
                 collection=Collection.policy,
                 chunk_index=chunk.index,
                 content=chunk.content,

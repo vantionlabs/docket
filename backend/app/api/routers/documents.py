@@ -48,6 +48,10 @@ def presign_upload(
     key = object_key(user.id, body.filename)
     doc = SourceDocument(
         user_id=user.id,
+        org_id=user.org_id,
+        # Defaults to transactional: a document nobody classified must not
+        # become policy by accident (spec section 8).
+        collection=body.collection,
         filename=body.filename,
         r2_key=key,
         content_type=body.content_type,

@@ -30,6 +30,7 @@ from app.db.models import (
     SourceDocument,
     User,
 )
+from tests.integration.conftest import _purge
 
 pytestmark = pytest.mark.integration
 
@@ -39,6 +40,15 @@ def db():
     with SessionLocal() as session:
         yield session
         session.rollback()
+
+
+@pytest.fixture
+def org(db, user):
+    """The org the user owns. Created through the real path, so this test
+    also covers `ensure_personal_org` (spec section 11)."""
+    from app.auth.orgs import ensure_personal_org
+
+    return ensure_personal_org(db, user.id, user.email).org_id
 
 
 @pytest.fixture
@@ -54,13 +64,13 @@ def user(db):
     db.add(row)
     db.commit()
     yield row
-    db.delete(row)
-    db.commit()
+    _purge(db, row)
 
 
-def _document(db, user, collection: Collection, filename: str) -> SourceDocument:
+def _document(db, user, collection: Collection, filename: str, org_id=None) -> SourceDocument:
     doc = SourceDocument(
         user_id=user.id,
+        org_id=org_id,
         collection=collection,
         filename=filename,
         r2_key=f"test/{uuid.uuid4()}",
@@ -111,12 +121,13 @@ def test_collection_filter_keeps_the_two_corpora_apart(db, user):
     assert [c.content for c in policy_chunks] == ["spend threshold clause"]
 
 
-def test_a_duplicate_idempotency_key_cannot_be_inserted(db, user):
+def test_a_duplicate_idempotency_key_cannot_be_inserted(db, user, org):
     """The guarantee of section 10 is the constraint, not the code near it."""
     from sqlalchemy.exc import IntegrityError
 
-    doc = _document(db, user, Collection.transactional, "invoice.md")
+    doc = _document(db, user, Collection.transactional, "invoice.md", org)
     decision = Decision(
+        org_id=org,
         user_id=user.id,
         document_id=doc.id,
         outcome="route_for_approval",
@@ -128,6 +139,7 @@ def test_a_duplicate_idempotency_key_cannot_be_inserted(db, user):
     key = f"decision:{decision.id}:approve_for_payment"
     db.add(
         Execution(
+            org_id=org,
             decision_id=decision.id,
             adapter="dry_run",
             idempotency_key=key,
@@ -138,6 +150,7 @@ def test_a_duplicate_idempotency_key_cannot_be_inserted(db, user):
 
     db.add(
         Execution(
+            org_id=org,
             decision_id=decision.id,
             adapter="dry_run",
             idempotency_key=key,
@@ -149,14 +162,15 @@ def test_a_duplicate_idempotency_key_cannot_be_inserted(db, user):
     db.rollback()
 
 
-def test_outcome_check_constraint_rejects_an_invented_outcome(db, user):
+def test_outcome_check_constraint_rejects_an_invented_outcome(db, user, org):
     """The enum is closed in the database too. A model that could invent an
     outcome could invent one nobody has a process for (section 9)."""
     from sqlalchemy.exc import IntegrityError
 
-    doc = _document(db, user, Collection.transactional, "invoice.md")
+    doc = _document(db, user, Collection.transactional, "invoice.md", org)
     db.add(
         Decision(
+            org_id=org,
             user_id=user.id,
             document_id=doc.id,
             outcome="pay_it_quietly",
@@ -168,12 +182,13 @@ def test_outcome_check_constraint_rejects_an_invented_outcome(db, user):
     db.rollback()
 
 
-def test_the_audit_join_answers_the_auditors_question(db, user):
+def test_the_audit_join_answers_the_auditors_question(db, user, org):
     """One join: why was this decided, citing what, and what fired."""
     from app.db.models import DecisionCitation
 
-    doc = _document(db, user, Collection.transactional, "invoice.md")
+    doc = _document(db, user, Collection.transactional, "invoice.md", org)
     decision = Decision(
+        org_id=org,
         user_id=user.id,
         document_id=doc.id,
         outcome="route_for_approval",
@@ -192,6 +207,7 @@ def test_the_audit_join_answers_the_auditors_question(db, user):
     )
     db.add(
         Execution(
+            org_id=org,
             decision_id=decision.id,
             adapter="dry_run",
             idempotency_key=f"decision:{decision.id}:approve_for_payment",
