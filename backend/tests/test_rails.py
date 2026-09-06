@@ -6,6 +6,8 @@ that fail loudly rather than a comment saying they matter.
 
 from decimal import Decimal
 
+import pytest
+
 from app.decisions.decide import check_citations
 from app.decisions.models import Decision, Outcome, PolicyCitation
 from app.decisions.policy import PolicyClause, PolicyCorpus
@@ -99,9 +101,18 @@ def test_marker_without_a_citation_fails():
     assert "markers without citations" in result.grounding_failure
 
 
-def test_auto_approve_with_no_citations_fails():
-    result = check_citations(_decision(rationale="Looks fine to me.", citations=[]), [CLAUSE])
+@pytest.mark.parametrize(
+    "outcome", [Outcome.auto_approve, Outcome.route_for_approval, Outcome.reject]
+)
+def test_any_acting_outcome_with_no_citations_fails(outcome):
+    """`route_for_approval` is a policy claim too. An uncited one is a
+    decision with no basis, and a live run produced them about one time in
+    four before this check covered it."""
+    result = check_citations(
+        _decision(outcome=outcome, rationale="Looks fine to me.", citations=[]), [CLAUSE]
+    )
     assert not result.grounding_passed
+    assert "no citations" in result.grounding_failure
 
 
 def test_needs_human_without_citations_is_allowed():

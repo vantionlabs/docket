@@ -310,7 +310,15 @@ def check_citations(decision: Decision, clauses: list[PolicyClause]) -> Decision
         validated.append((citation.index, clause, citation.excerpt))
 
     # An outcome that acts on policy has to point at the policy it acted on.
-    if decision.outcome in (Outcome.auto_approve, Outcome.reject) and not validated:
+    # Every outcome does, except needs_human: declining to decide needs no
+    # policy support, and that is the point of having it.
+    #
+    # This is stricter than it first looks. `route_for_approval` is a policy
+    # claim too ("policy permits this, but someone must sign off"), and an
+    # uncited one is a decision with no basis, which is the one thing this
+    # pipeline promises never to ship. An integration run found the model
+    # producing exactly that, roughly one time in four.
+    if decision.outcome is not Outcome.needs_human and not validated:
         return fail(f"{decision.outcome} with no citations")
 
     return DecisionResult(
