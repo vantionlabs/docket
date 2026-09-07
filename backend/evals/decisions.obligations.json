@@ -1,0 +1,218 @@
+[
+  {
+    "dimension": "scope",
+    "summary": "This policy governs the approval and payment of supplier invoices, version 3.1, in force from 1 January 2026.",
+    "always_applies": true,
+    "threshold": null,
+    "clause_id": "clause-1",
+    "clause_ref": "Northwind BV procurement policy"
+  },
+  {
+    "dimension": "escalation",
+    "summary": "Where a clause conflicts with a signed contract, the signed contract prevails and the case goes to Finance.",
+    "always_applies": true,
+    "threshold": null,
+    "clause_id": "clause-1",
+    "clause_ref": "Northwind BV procurement policy"
+  },
+  {
+    "dimension": "scope",
+    "summary": "Policy applies to all invoices for goods or services delivered to Northwind BV and its subsidiaries",
+    "always_applies": true,
+    "threshold": null,
+    "clause_id": "clause-2",
+    "clause_ref": "1. Scope"
+  },
+  {
+    "dimension": "scope",
+    "summary": "Policy does not apply to employee expense claims",
+    "always_applies": true,
+    "threshold": null,
+    "clause_id": "clause-2",
+    "clause_ref": "1. Scope"
+  },
+  {
+    "dimension": "scope",
+    "summary": "Policy does not apply to intercompany recharges",
+    "always_applies": true,
+    "threshold": null,
+    "clause_id": "clause-2",
+    "clause_ref": "1. Scope"
+  },
+  {
+    "dimension": "purchase_order",
+    "summary": "Purchases above EUR 500 excluding VAT must have a purchase order raised before ordering goods or services",
+    "always_applies": false,
+    "threshold": "500",
+    "clause_id": "clause-3",
+    "clause_ref": "2. Purchase orders"
+  },
+  {
+    "dimension": "purchase_order",
+    "summary": "Invoices above EUR 500 without a purchase order number cannot be approved for payment and must be referred to the cost centre owner for retrospective authorisation",
+    "always_applies": false,
+    "threshold": "500",
+    "clause_id": "clause-3",
+    "clause_ref": "2. Purchase orders"
+  },
+  {
+    "dimension": "purchase_order",
+    "summary": "Purchases at or below EUR 500 excluding VAT do not require a purchase order",
+    "always_applies": false,
+    "threshold": "500",
+    "clause_id": "clause-3",
+    "clause_ref": "2. Purchase orders"
+  },
+  {
+    "dimension": "amount",
+    "summary": "Up to EUR 1,000 invoices may be approved by the cost centre owner.",
+    "always_applies": false,
+    "threshold": "1000",
+    "clause_id": "clause-4",
+    "clause_ref": "3. Spend thresholds and approval authority"
+  },
+  {
+    "dimension": "amount",
+    "summary": "Above EUR 1,000 up to EUR 10,000 invoices must be approved by a department head.",
+    "always_applies": false,
+    "threshold": "10000",
+    "clause_id": "clause-4",
+    "clause_ref": "3. Spend thresholds and approval authority"
+  },
+  {
+    "dimension": "amount",
+    "summary": "Above EUR 10,000 up to EUR 50,000 invoices must be approved by the Finance Director.",
+    "always_applies": false,
+    "threshold": "50000",
+    "clause_id": "clause-4",
+    "clause_ref": "3. Spend thresholds and approval authority"
+  },
+  {
+    "dimension": "amount",
+    "summary": "Above EUR 50,000 invoices must be approved by two board members and the approval must be minuted.",
+    "always_applies": false,
+    "threshold": "50000",
+    "clause_id": "clause-4",
+    "clause_ref": "3. Spend thresholds and approval authority"
+  },
+  {
+    "dimension": "escalation",
+    "summary": "No individual may approve an invoice they themselves submitted or that names them as the requester.",
+    "always_applies": true,
+    "threshold": null,
+    "clause_id": "clause-4",
+    "clause_ref": "3. Spend thresholds and approval authority"
+  },
+  {
+    "dimension": "supplier",
+    "summary": "Invoices from approved suppliers (Contoso Cleaning Services BV, Fabrikam Office Supplies BV, Northwind IT Partners BV, Tailspin Facilities BV, Woodgrove Legal BV) may be processed normally.",
+    "always_applies": false,
+    "threshold": null,
+    "clause_id": "clause-5",
+    "clause_ref": "4. Approved suppliers"
+  },
+  {
+    "dimension": "supplier",
+    "summary": "Invoices from suppliers not on the approved list must be routed to Procurement for a supplier check before payment.",
+    "always_applies": true,
+    "threshold": null,
+    "clause_id": "clause-5",
+    "clause_ref": "4. Approved suppliers"
+  },
+  {
+    "dimension": "payment_terms",
+    "summary": "Standard payment term is 30 days from invoice date",
+    "always_applies": true,
+    "threshold": null,
+    "clause_id": "clause-6",
+    "clause_ref": "5. Payment terms"
+  },
+  {
+    "dimension": "escalation",
+    "summary": "Refer supplier to Finance if payment demanded in fewer than 14 days",
+    "always_applies": false,
+    "threshold": null,
+    "clause_id": "clause-6",
+    "clause_ref": "5. Payment terms"
+  },
+  {
+    "dimension": "payment_terms",
+    "summary": "Early settlement discounts may be taken if contract provides for them",
+    "always_applies": false,
+    "threshold": null,
+    "clause_id": "clause-6",
+    "clause_ref": "5. Payment terms"
+  },
+  {
+    "dimension": "vat",
+    "summary": "Only Dutch statutory VAT rates of 0%, 9%, and 21% are acceptable on domestic invoices",
+    "always_applies": true,
+    "threshold": null,
+    "clause_id": "clause-7",
+    "clause_ref": "6. VAT and arithmetic"
+  },
+  {
+    "dimension": "vat",
+    "summary": "Invoice totals must add up correctly; invoices with arithmetic errors must be returned to the supplier",
+    "always_applies": true,
+    "threshold": null,
+    "clause_id": "clause-7",
+    "clause_ref": "6. VAT and arithmetic"
+  },
+  {
+    "dimension": "duplicate",
+    "summary": "Reject any invoice with a supplier and invoice number combination already recorded against a paid invoice",
+    "always_applies": true,
+    "threshold": null,
+    "clause_id": "clause-8",
+    "clause_ref": "7. Duplicate invoices"
+  },
+  {
+    "dimension": "duplicate",
+    "summary": "When a supplier reissues a corrected invoice, credit the original invoice before processing the corrected one",
+    "always_applies": true,
+    "threshold": null,
+    "clause_id": "clause-8",
+    "clause_ref": "7. Duplicate invoices"
+  },
+  {
+    "dimension": "currency",
+    "summary": "Invoices must be payable in euro; non-euro invoices require Finance conversion at the rate on the invoice date with documentation of the rate used.",
+    "always_applies": true,
+    "threshold": null,
+    "clause_id": "clause-9",
+    "clause_ref": "8. Currency"
+  },
+  {
+    "dimension": "escalation",
+    "summary": "Route non-euro invoices to Finance for currency conversion and rate recording.",
+    "always_applies": false,
+    "threshold": null,
+    "clause_id": "clause-9",
+    "clause_ref": "8. Currency"
+  },
+  {
+    "dimension": "escalation",
+    "summary": "Route invoice to Finance when policy does not settle a case or two clauses conflict",
+    "always_applies": true,
+    "threshold": null,
+    "clause_id": "clause-10",
+    "clause_ref": "9. Escalation"
+  },
+  {
+    "dimension": "escalation",
+    "summary": "Unsure approvers must escalate rather than approve",
+    "always_applies": true,
+    "threshold": null,
+    "clause_id": "clause-10",
+    "clause_ref": "9. Escalation"
+  },
+  {
+    "dimension": "escalation",
+    "summary": "Escalation is not treated as a fault or error",
+    "always_applies": true,
+    "threshold": null,
+    "clause_id": "clause-10",
+    "clause_ref": "9. Escalation"
+  }
+]

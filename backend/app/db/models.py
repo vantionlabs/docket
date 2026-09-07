@@ -175,7 +175,13 @@ class DocumentChunk(Base):
     )
     chunk_index: Mapped[int] = mapped_column(Integer)
     content: Mapped[str] = mapped_column(Text)
-    embedding: Mapped[list[float]] = mapped_column(Vector(settings.embedding_dimensions))
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(settings.embedding_dimensions), nullable=True
+    )
+    """Nullable since migration 0006. A chunk can exist before it has been
+    embedded, and after an embedding-model change that invalidated the old
+    vectors. Such a chunk is invisible to vector search and still found by
+    FTS: degraded, not broken, and countable with scripts/reembed.py."""
     # `fts` is a GENERATED tsvector column added in the initial migration
     # (SQLAlchemy can't declare generated tsvector portably; it exists in
     # the database and is queried with text() in retrieval).
@@ -520,3 +526,38 @@ class Execution(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
+class PolicyObligation(Base):
+    """One rule a policy clause imposes, indexed once at ingest.
+
+    The index that makes retrieval auditable (spec section 8, extended).
+    Without it, "we searched the policy and here is what came back" is the
+    strongest claim the system can make. With it, the claim becomes "these
+    rules applied and every one of them was considered", which is the one
+    a client is actually buying.
+
+    Rows are written by a model reading the policy, and are then data:
+    readable, editable, and reviewable by the client whose policy it is. The
+    model helps build the index. It does not decide at decision time whether
+    a rule was relevant; that check runs in code against these rows.
+    """
+
+    __tablename__ = "policy_obligations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
+    org_id: Mapped[uuid.UUID] = _org_fk(nullable=False)
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("source_documents.id", ondelete="CASCADE"), index=True
+    )
+    chunk_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("document_chunks.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    dimension: Mapped[str] = mapped_column(Text, index=True)
+    """app.decisions.coverage.Dimension. A closed set: a dimension the code
+    cannot evaluate is one that cannot be checked."""
+    summary: Mapped[str] = mapped_column(Text)
+    clause_ref: Mapped[str] = mapped_column(Text)
+    always_applies: Mapped[bool] = mapped_column(Boolean, default=False)
+    threshold: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())

@@ -143,6 +143,18 @@ def apply_rails(
         outcome = Outcome.needs_human
         notes.append(_grounding_note(result.grounding_failure))
 
+    # Rail 1b: coverage. A decision reached without a rule that applies was
+    # not made on the policy, whatever it cited. Only gaps that could not be
+    # repaired reach here; anything retrieval could fetch was already added
+    # to the evidence before the model saw it.
+    coverage = getattr(result, "coverage", None)
+    if coverage is not None and not coverage.complete:
+        outcome = Outcome.needs_human
+        notes.extend(coverage.notes())
+        unmet.extend(
+            f"policy rule not considered: {o.clause_ref}" for o in coverage.missed
+        )
+
     # Rail 2: unverified fields.
     if unverified_fields:
         if outcome is Outcome.auto_approve:

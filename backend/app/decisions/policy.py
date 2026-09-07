@@ -24,6 +24,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from app.logging import get_logger
+
+log = get_logger(__name__)
+
 _HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
 _WORD = re.compile(r"[a-z0-9]+")
 _STOPWORDS = frozenset(
@@ -50,9 +54,17 @@ class PolicyClause:
 
 
 class PolicySource(Protocol):
-    """Anything that can hand back citable policy clauses for a query."""
+    """Anything that can hand back citable policy clauses.
+
+    `retrieve` is ranking: what is most relevant to this query. `by_chunk_ids`
+    is lookup: these specific clauses, because something else determined they
+    are required. Coverage repair needs the second, and a source that could
+    only rank would have no way to add a clause it failed to rank.
+    """
 
     def retrieve(self, query: str, top_k: int = 8) -> list[PolicyClause]: ...
+
+    def by_chunk_ids(self, chunk_ids: list) -> list[PolicyClause]: ...
 
 
 def _tokens(text: str) -> list[str]:
@@ -109,6 +121,12 @@ class PolicyCorpus:
     def __contains__(self, clause_id: str) -> bool:
         return clause_id in self._by_id
 
+    def by_chunk_ids(self, chunk_ids: list) -> list[PolicyClause]:
+        """Look up by id. The in-memory corpus has no chunks, so its own
+        `clause-n` ids are what a caller can hold."""
+        wanted = {str(cid) for cid in chunk_ids}
+        return [clause for clause in self.clauses if clause.id in wanted]
+
     def retrieve(self, query: str, top_k: int = 8) -> list[PolicyClause]:
         """The clauses most likely to bear on `query`, best first."""
         wanted = set(_tokens(query))
@@ -147,6 +165,48 @@ class RetrievedPolicy:
     def __init__(self, user_id: uuid.UUID) -> None:
         self.user_id = user_id
 
+    def by_chunk_ids(self, chunk_ids: list) -> list[PolicyClause]:
+        """Fetch specific policy chunks, bypassing ranking entirely.
+
+        Still filtered on user and collection: a required clause is not a
+        reason to reach outside the policy corpus or another tenant's rows.
+        """
+        if not chunk_ids:
+            return []
+
+        from sqlalchemy import select
+
+        from app.db.engine import SessionLocal
+        from app.db.models import Collection, DocumentChunk, SourceDocument
+
+        with SessionLocal() as db:
+            rows = db.execute(
+                select(
+                    DocumentChunk.id,
+                    DocumentChunk.document_id,
+                    DocumentChunk.chunk_index,
+                    DocumentChunk.content,
+                    SourceDocument.filename,
+                )
+                .join(SourceDocument, SourceDocument.id == DocumentChunk.document_id)
+                .where(
+                    DocumentChunk.id.in_(chunk_ids),
+                    DocumentChunk.user_id == self.user_id,
+                    DocumentChunk.collection == Collection.policy,
+                )
+            ).all()
+
+        return [
+            PolicyClause(
+                id=str(row.id),
+                ref=_clause_ref(row.filename, row.content, row.chunk_index),
+                text=row.content,
+                chunk_id=row.id,
+                document_id=row.document_id,
+            )
+            for row in rows
+        ]
+
     def retrieve(self, query: str, top_k: int = 8) -> list[PolicyClause]:
         from app.db.models import Collection
         from app.retrieval.hybrid import hybrid_search
@@ -178,3 +238,76 @@ def _clause_ref(filename: str, content: str, chunk_index: int) -> str:
         if match:
             return f"{filename}, {match.group(2).strip()}"
     return f"{filename}, part {chunk_index + 1}"
+
+
+class CoveredPolicy:
+    """Retrieval that cannot silently miss a rule that applies.
+
+    Wraps any `PolicySource`. Ranking finds what is most relevant; this adds
+    what is *required*, by looking up the obligations the document triggers
+    and pulling in any whose clause ranking did not return.
+
+    The important part is that a gap is repaired rather than reported. A
+    warning that a clause was missed is only useful to whoever reads logs; a
+    decision made without a rule that applies is wrong no matter who reads
+    what afterwards. So the missing clauses are fetched directly by id and
+    added to the evidence before the model sees anything, and the decision
+    is made on the complete set.
+
+    Only a gap that cannot be repaired reaches the rails: an obligation
+    whose clause has been deleted, or was never chunked. That is rare, and
+    it is a real reason to stop and ask a person.
+    """
+
+    def __init__(self, inner: PolicySource, obligations: list, triggered: set) -> None:
+        self.inner = inner
+        self.obligations = obligations
+        self.triggered = triggered
+        self.report = None
+
+    def retrieve(self, query: str, top_k: int = 8) -> list[PolicyClause]:
+        from app.decisions.coverage import check_coverage
+
+        clauses = list(self.inner.retrieve(query, top_k=top_k))
+        found = {clause.id for clause in clauses}
+
+        report = check_coverage(self.obligations, self.triggered, found)
+        gaps_before = list(report.missed)
+
+        if gaps_before:
+            repaired = self._fetch(gaps_before)
+            clauses.extend(repaired)
+            # Re-check against the repaired set so `report.missed` ends up
+            # holding only what could NOT be repaired. Anything else would
+            # escalate cases the system just fixed.
+            report = check_coverage(
+                self.obligations, self.triggered, found | {c.id for c in repaired}
+            )
+            log.info(
+                "coverage.repaired",
+                pulled_in=sorted({o.clause_ref for o in gaps_before if o not in report.missed}),
+                ranked=len(found),
+                added=len(repaired),
+            )
+
+        if report.missed:
+            # This one IS a problem: a rule that applies, whose clause could
+            # not be fetched at all. Rail 1b turns it into needs_human.
+            log.warning(
+                "coverage.unrepairable",
+                missed=sorted({o.clause_ref for o in report.missed}),
+                recall=round(report.recall, 3),
+            )
+
+        self.report = report
+        return clauses
+
+    def _fetch(self, missed: list) -> list[PolicyClause]:
+        """Pull missed obligations' clauses straight from their rows.
+
+        Keyed by `clause_key`, the same identifier the coverage check
+        matched on. Using a different one here would report gaps that
+        repair then fails to fill, without either half being wrong on its
+        own."""
+        keys = [o.clause_key for o in missed]
+        return self.inner.by_chunk_ids(keys) if keys else []

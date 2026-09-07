@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import select
 
+from app.config import settings
 from app.core.task_context import TaskContext
 from app.db.engine import SessionLocal
 from app.db.models import (
@@ -51,7 +52,9 @@ FIXTURES = Path(__file__).resolve().parents[1].parent / "evals/fixtures"
 POLICY = FIXTURES / "procurement-policy.md"
 INVOICE = FIXTURES / "invoices/02-over-threshold-no-po.md"
 
-DIMENSIONS = 1536
+# Follows config: a test that restates the width breaks on every
+# embedding-model change and tells you nothing useful when it does.
+DIMENSIONS = settings.embedding_dimensions
 
 
 @pytest.fixture

@@ -69,10 +69,15 @@ class Settings(BaseSettings):
     azure_openai_api_version: str = "2024-10-21"
 
     # --- embeddings (independent provider: Anthropic has no embeddings API) ---
-    embedding_provider: str = "openai"
-    """openai | azure. For Voyage/Cohere, add a branch in app/llm/embeddings.py."""
-    embedding_model: str = "text-embedding-3-small"
-    embedding_dimensions: int = 1536
+    embedding_provider: str = "voyage"
+    """openai | azure | voyage. Voyage pairs with a Claude chat stack and
+    distinguishes query from document embeddings, which retrieval uses."""
+    embedding_model: str = "voyage-3.5"
+    embedding_dimensions: int = 1024
+    """Must match the pgvector column width. Changing it needs a migration
+    and a re-embed of every chunk: vectors of different widths cannot be
+    compared, and old rows do not silently convert."""
+    voyage_api_key: str = ""
 
     # --- reranking (optional quality step after hybrid retrieval) ---
     rerank_enabled: bool = False
@@ -87,6 +92,11 @@ class Settings(BaseSettings):
     retrieval_fts_config: str = "english"
 
     # --- ingestion ---
+    contextual_retrieval: str = "structural"
+    """off | structural | llm. What context is prepended to a chunk before
+    embedding it (never before storing it). `structural` uses the document
+    name and heading path and is free; `llm` generates a sentence per chunk
+    and costs a call each."""
     chunk_target_tokens: int = 800
     chunk_overlap_ratio: float = 0.15
 

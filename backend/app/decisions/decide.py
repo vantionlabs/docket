@@ -77,6 +77,9 @@ class DecisionResult:
     """Exactly what was offered this turn: the citation allowlist."""
     grounding_passed: bool = True
     grounding_failure: str = ""
+    coverage: object | None = None
+    """The CoverageReport, when the policy source produced one. None means
+    coverage was not checked, which is not the same as checked and clean."""
     model: str = ""
     cited: list[tuple[int, PolicyClause, str]] = field(default_factory=list)
     """(index, clause, excerpt) for each citation that passed the check."""
@@ -253,6 +256,7 @@ def decide_invoice(
             clauses=[],
             grounding_passed=False,
             grounding_failure="no policy clauses retrieved",
+            coverage=getattr(corpus, "report", None),
         )
 
     prompt = "\n\n".join(
@@ -283,6 +287,7 @@ def decide_invoice(
         pass
 
     outcome = check_citations(decision, clauses)
+    outcome.coverage = getattr(corpus, "report", None)
 
     # Stage two: a verbatim quote of the wrong clause passes the structural
     # check and should not pass this one.

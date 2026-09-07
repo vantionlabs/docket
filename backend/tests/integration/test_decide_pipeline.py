@@ -18,6 +18,7 @@ import uuid
 import pytest
 from sqlalchemy import select
 
+from app.config import settings
 from app.db.engine import SessionLocal
 from app.db.models import (
     Collection,
@@ -107,7 +108,7 @@ def test_collection_filter_keeps_the_two_corpora_apart(db, user):
                 collection=doc.collection,
                 chunk_index=0,
                 content=text,
-                embedding=[0.0] * 1536,
+                embedding=[0.0] * settings.embedding_dimensions,
             )
         )
     db.commit()

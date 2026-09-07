@@ -1,0 +1,12 @@
+# The labelled set (spec section 13). Each line is a document, the outcome a
+# human actually reached, and the policy dimensions a correct decision must
+# have considered. Real client sets are 50-100 documents; this is the
+# skeleton plus the deliberate nasties the spec names.
+#
+# `must_cite_dimensions` is what makes a regression legible. "The currency
+# rule stopped being retrieved" is actionable; "recall fell to 0.8" is not.
+{"document": "invoices/01-clean-under-threshold.md", "expected": "auto_approve", "must_cite_dimensions": ["amount", "supplier", "purchase_order"], "note": "Approved supplier, PO present, under the cost centre limit. A human would pay this without thinking."}
+{"document": "invoices/02-over-threshold-no-po.md", "expected": "route_for_approval", "must_cite_dimensions": ["amount", "purchase_order"], "note": "No PO and over EUR 10,000: two separate reasons a person must sign."}
+{"document": "invoices/03-unknown-supplier.md", "expected": "route_for_approval", "must_cite_dimensions": ["supplier", "amount", "payment_terms"], "note": "Off the approved list, and 7-day terms, which policy calls a fraud indicator."}
+{"document": "invoices/04-arithmetic-wrong.md", "expected": "reject", "must_cite_dimensions": ["vat"], "note": "Lines do not sum to the subtotal and the implied VAT rate is not legal. Return to supplier."}
+{"document": "invoices/05-foreign-currency.md", "expected": "route_for_approval", "must_cite_dimensions": ["currency", "amount"], "note": "The M1 regression case. USD invoice: the currency rule must be considered, and once was not."}

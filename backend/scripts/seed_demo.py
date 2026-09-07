@@ -31,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sqlalchemy import select  # noqa: E402
 
 from app.auth.orgs import ensure_personal_org  # noqa: E402
+from app.config import settings
 from app.core.task_context import TaskContext  # noqa: E402
 from app.db.engine import SessionLocal  # noqa: E402
 from app.db.models import (  # noqa: E402
@@ -51,7 +52,9 @@ INVOICES = sorted((FIXTURES / "invoices").glob("*.md"))
 
 DEMO_EMAIL = "demo@northwind.nl"
 DEMO_PASSWORD = "docket-demo"
-DIMENSIONS = 1536
+# Follows config: a test that restates the width breaks on every
+# embedding-model change and tells you nothing useful when it does.
+DIMENSIONS = settings.embedding_dimensions
 
 
 def _stub_embeddings() -> None:

@@ -9,15 +9,26 @@ node also mirrors it onto the document so the frontend sees it).
 
 import uuid
 
+from sqlalchemy import select
+
 from app.core.node import Node
 from app.core.registry import register
 from app.core.task_context import TaskContext
 from app.core.workflow import Workflow
-from app.db.models import DocumentChunk, DocumentStatus, SourceDocument
+from app.db.models import (
+    Collection,
+    DocumentChunk,
+    DocumentStatus,
+    PolicyObligation,
+    SourceDocument,
+)
 from app.ingestion.chunking import chunk_text
 from app.ingestion.parsing import parse_document
-from app.retrieval.embeddings import embed_batch
+from app.logging import get_logger
+from app.retrieval.embeddings import embed_documents
 from app.storage.r2 import download_bytes
+
+log = get_logger(__name__)
 
 
 def _document(ctx: TaskContext) -> SourceDocument:
@@ -66,7 +77,8 @@ class ChunkDocument(Node):
 class EmbedChunks(Node):
     def process(self, ctx: TaskContext) -> TaskContext:
         chunks = ctx.metadata["chunks"]
-        ctx.metadata["vectors"] = embed_batch([c.content for c in chunks])
+        # Documents, not queries: the provider embeds the two differently.
+        ctx.metadata["vectors"] = embed_documents([c.content for c in chunks])
         ctx.nodes[self.name] = {"embedded": len(chunks)}
         return ctx
 
@@ -99,6 +111,62 @@ class StoreChunks(Node):
         return ctx
 
 
+class IndexObligations(Node):
+    """Index a policy document into the obligations its clauses impose.
+
+    Runs only for the policy collection, and only after the chunks exist,
+    because an obligation points at the chunk that states it. For anything
+    transactional this is a no-op: an invoice imposes no rules.
+
+    This is what makes coverage checking possible later (see
+    app/decisions/coverage.py). It costs one cheap model call per chunk,
+    once, at ingest, rather than anything at decision time.
+    """
+
+    def process(self, ctx: TaskContext) -> TaskContext:
+        doc: SourceDocument = ctx.metadata["document"]
+        if doc.collection is not Collection.policy:
+            ctx.nodes[self.name] = {"skipped": "not a policy document"}
+            return ctx
+
+        from app.decisions.coverage import extract_obligations
+        from app.decisions.policy import _clause_ref
+
+        # Re-indexing replaces: a policy that changed should not leave the
+        # rules it used to impose lying around as coverage requirements.
+        ctx.db.query(PolicyObligation).filter(
+            PolicyObligation.document_id == doc.id
+        ).delete()
+        ctx.db.commit()
+
+        stored = 0
+        for chunk in ctx.db.scalars(
+            select(DocumentChunk)
+            .where(DocumentChunk.document_id == doc.id)
+            .order_by(DocumentChunk.chunk_index)
+        ):
+            ref = _clause_ref(doc.filename, chunk.content, chunk.chunk_index)
+            for obligation in extract_obligations(chunk.content, ref):
+                ctx.db.add(
+                    PolicyObligation(
+                        org_id=doc.org_id,
+                        document_id=doc.id,
+                        chunk_id=chunk.id,
+                        dimension=obligation["dimension"],
+                        summary=obligation["summary"],
+                        clause_ref=ref,
+                        always_applies=obligation.get("always_applies", False),
+                        threshold=obligation.get("threshold"),
+                    )
+                )
+                stored += 1
+        ctx.db.commit()
+
+        log.info("policy.indexed", document_id=str(doc.id), obligations=stored)
+        ctx.nodes[self.name] = {"obligations": stored}
+        return ctx
+
+
 @register("document.ingest")
 class DocumentIngestWorkflow(Workflow):
     nodes = [
@@ -108,6 +176,7 @@ class DocumentIngestWorkflow(Workflow):
         ChunkDocument(),
         EmbedChunks(),
         StoreChunks(),
+        IndexObligations(),
     ]
 
     def on_failure(self, ctx: TaskContext, exc: Exception) -> None:

@@ -28,9 +28,10 @@ from app.db.models import (
     Extraction,
     SourceDocument,
 )
+from app.decisions.coverage import load_obligations, triggered_dimensions
 from app.decisions.decide import decide_invoice
 from app.decisions.models import Outcome
-from app.decisions.policy import RetrievedPolicy
+from app.decisions.policy import CoveredPolicy, RetrievedPolicy
 from app.decisions.rails import apply_rails, rule_for
 from app.extraction.arithmetic import check_invoice
 from app.extraction.extract import extract
@@ -123,19 +124,39 @@ class DecideAgainstPolicy(Node):
 
     def process(self, ctx: TaskContext) -> TaskContext:
         doc: SourceDocument = ctx.metadata["document"]
-        result = decide_invoice(
-            ctx.metadata["invoice"],
+        invoice = ctx.metadata["invoice"]
+
+        # Which rules apply is computed in code from the extracted fields,
+        # before any retrieval happens. Retrieval then has to account for
+        # all of them (app/decisions/coverage.py).
+        triggered = triggered_dimensions(
+            invoice, arithmetic_ok=not ctx.metadata["arithmetic_failures"]
+        )
+        source = CoveredPolicy(
             RetrievedPolicy(doc.user_id),
+            obligations=load_obligations(ctx.db, doc.org_id),
+            triggered=triggered,
+        )
+
+        result = decide_invoice(
+            invoice,
+            source,
             arithmetic_failures=ctx.metadata["arithmetic_failures"],
             unverified_fields=ctx.metadata["unverified"],
             user_id=doc.user_id,
         )
         ctx.metadata["decision_result"] = result
+
+        coverage = result.coverage
         ctx.nodes[self.name] = {
             "proposed": str(result.decision.outcome),
             "clauses_retrieved": len(result.clauses),
             "grounding_passed": result.grounding_passed,
             "grounding_failure": result.grounding_failure,
+            "dimensions_triggered": sorted(str(d) for d in triggered),
+            "obligations_applicable": len(coverage.triggered) if coverage else 0,
+            "coverage_recall": round(coverage.recall, 3) if coverage else None,
+            "coverage_gaps": [o.clause_ref for o in coverage.missed] if coverage else [],
         }
         return ctx
 
