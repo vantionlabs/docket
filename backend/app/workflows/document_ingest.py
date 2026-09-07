@@ -11,6 +11,7 @@ import uuid
 
 from sqlalchemy import select
 
+from app.config import settings
 from app.core.node import Node
 from app.core.registry import register
 from app.core.task_context import TaskContext
@@ -23,6 +24,7 @@ from app.db.models import (
     SourceDocument,
 )
 from app.ingestion.chunking import chunk_text
+from app.ingestion.context import contextualize
 from app.ingestion.parsing import parse_document
 from app.logging import get_logger
 from app.retrieval.embeddings import embed_documents
@@ -75,11 +77,31 @@ class ChunkDocument(Node):
 
 
 class EmbedChunks(Node):
+    """Embed each chunk, with the context chunking took away.
+
+    A chunk that reads "This does not apply to intercompany recharges" is
+    about nothing once it is separated from the heading above it, and will
+    not be retrieved for a question about what the rule covers. So the text
+    that gets embedded carries the document name and heading path
+    (app/ingestion/context.py); the text that gets STORED does not, because
+    a citation quotes the document rather than our note about it.
+    """
+
     def process(self, ctx: TaskContext) -> TaskContext:
+        doc: SourceDocument = ctx.metadata["document"]
         chunks = ctx.metadata["chunks"]
+        document_text = ctx.metadata["text"]
+
+        embed_texts = [
+            contextualize(chunk.content, doc.filename, document_text=document_text)
+            for chunk in chunks
+        ]
         # Documents, not queries: the provider embeds the two differently.
-        ctx.metadata["vectors"] = embed_documents([c.content for c in chunks])
-        ctx.nodes[self.name] = {"embedded": len(chunks)}
+        ctx.metadata["vectors"] = embed_documents(embed_texts)
+        ctx.nodes[self.name] = {
+            "embedded": len(chunks),
+            "contextual_retrieval": settings.contextual_retrieval,
+        }
         return ctx
 
 
