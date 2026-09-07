@@ -70,8 +70,10 @@ class Settings(BaseSettings):
 
     # --- embeddings (independent provider: Anthropic has no embeddings API) ---
     embedding_provider: str = "voyage"
-    """openai | azure | voyage. Voyage pairs with a Claude chat stack and
-    distinguishes query from document embeddings, which retrieval uses."""
+    """openai | azure | voyage | none. Voyage pairs with a Claude chat stack
+    and distinguishes query from document embeddings, which retrieval uses.
+    `none` is deliberate and supported: retrieval falls back to Postgres FTS
+    alone, which is worse and is not broken."""
     embedding_model: str = "voyage-3.5"
     embedding_dimensions: int = 1024
     """Must match the pgvector column width. Changing it needs a migration

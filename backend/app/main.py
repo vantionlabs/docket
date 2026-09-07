@@ -97,7 +97,24 @@ def readiness(response: Response) -> dict:
 
     ok = all(v == "ok" for v in checks.values())
     response.status_code = 200 if ok else 503
-    return {"status": "ok" if ok else "degraded", "checks": checks}
+
+    # Retrieval mode is reported, not gated. An install with no embedding
+    # provider still serves requests, and this is where you find out that
+    # half of hybrid search is switched off before you conclude the corpus
+    # is bad.
+    from app.llm.embeddings import embeddings_available
+
+    embeddings_ok, reason = embeddings_available()
+    retrieval = {
+        "mode": "hybrid" if embeddings_ok else "fts_only",
+        "embeddings": "ok" if embeddings_ok else reason,
+    }
+
+    return {
+        "status": "ok" if ok else "degraded",
+        "checks": checks,
+        "retrieval": retrieval,
+    }
 
 
 # Routers are imported late so `app.main` stays importable in isolation

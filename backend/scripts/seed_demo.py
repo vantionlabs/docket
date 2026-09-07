@@ -28,7 +28,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sqlalchemy import select  # noqa: E402
+from sqlalchemy import func, select  # noqa: E402
 
 from app.auth.orgs import ensure_personal_org  # noqa: E402
 from app.config import settings
@@ -142,7 +142,54 @@ def _policy(db, user, org_id) -> SourceDocument:
         )
     db.commit()
     print(f"loaded policy: {POLICY.name}, {len(chunks)} chunks")
+    _index_obligations(db, doc, org_id)
     return doc
+
+
+def _index_obligations(db, doc, org_id) -> None:
+    """Index the policy into obligations, so coverage checking has an index.
+
+    Normally the IndexObligations node does this during ingest. The seed
+    writes chunks directly (no R2, no worker), so it calls the same
+    extraction here rather than leaving the demo with coverage silently
+    switched off.
+    """
+    from app.db.models import PolicyObligation
+    from app.decisions.coverage import extract_obligations
+    from app.decisions.policy import _clause_ref
+
+    existing = db.scalar(
+        select(func.count())
+        .select_from(PolicyObligation)
+        .where(PolicyObligation.document_id == doc.id)
+    )
+    if existing:
+        print(f"policy already indexed: {existing} obligations")
+        return
+
+    stored = 0
+    for chunk in db.scalars(
+        select(DocumentChunk)
+        .where(DocumentChunk.document_id == doc.id)
+        .order_by(DocumentChunk.chunk_index)
+    ):
+        ref = _clause_ref(doc.filename, chunk.content, chunk.chunk_index)
+        for obligation in extract_obligations(chunk.content, ref):
+            db.add(
+                PolicyObligation(
+                    org_id=org_id,
+                    document_id=doc.id,
+                    chunk_id=chunk.id,
+                    dimension=obligation["dimension"],
+                    summary=obligation["summary"],
+                    clause_ref=ref,
+                    always_applies=obligation.get("always_applies", False),
+                    threshold=obligation.get("threshold"),
+                )
+            )
+            stored += 1
+    db.commit()
+    print(f"indexed the policy into {stored} obligations")
 
 
 def _decide(db, user, org_id, path: Path) -> None:

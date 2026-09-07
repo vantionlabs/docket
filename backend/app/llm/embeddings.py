@@ -11,6 +11,12 @@ query and a document differently on purpose: a question and the passage that
 answers it are not the same kind of text, and telling the model which one it
 is measurably improves retrieval. Providers that do not distinguish ignore
 the hint. This is why `embed_query` is not just `embed_batch([text])[0]`.
+
+**`EMBEDDING_PROVIDER=none` is a supported setting**, meaning "this install
+has no embeddings, run retrieval on Postgres FTS alone". It exists so that
+running without an embedding bill is a decision somebody made rather than a
+crash they worked around. `embeddings_available()` reports whether the
+configured provider can actually be used, and retrieval asks before trying.
 """
 
 from functools import lru_cache
@@ -44,8 +50,30 @@ def _client() -> Any:
     if provider == "voyage":
         return None  # voyage speaks plain HTTP; no SDK to construct
     raise ValueError(
-        f"Unknown EMBEDDING_PROVIDER {settings.embedding_provider!r} (openai|azure|voyage)"
+        f"Unknown EMBEDDING_PROVIDER {settings.embedding_provider!r} "
+        "(openai|azure|voyage|none)"
     )
+
+
+def embeddings_available() -> tuple[bool, str]:
+    """Can this install embed? Returns (available, reason when it cannot).
+
+    Checked rather than discovered by exception, because the answer decides
+    how retrieval runs and "it threw" is a bad way to learn a deployment has
+    no embedding provider.
+    """
+    provider = settings.embedding_provider.lower()
+    if provider == "none":
+        return False, "EMBEDDING_PROVIDER is none: retrieval runs on Postgres FTS alone"
+    if provider == "voyage" and not settings.voyage_api_key:
+        return False, "EMBEDDING_PROVIDER is voyage but VOYAGE_API_KEY is unset"
+    if provider == "openai" and not settings.openai_api_key:
+        return False, "EMBEDDING_PROVIDER is openai but OPENAI_API_KEY is unset"
+    if provider == "azure" and not settings.azure_openai_api_key:
+        return False, "EMBEDDING_PROVIDER is azure but AZURE_OPENAI_API_KEY is unset"
+    if provider not in ("openai", "azure", "voyage"):
+        return False, f"Unknown EMBEDDING_PROVIDER {settings.embedding_provider!r}"
+    return True, ""
 
 
 def embed_query(text: str) -> list[float]:

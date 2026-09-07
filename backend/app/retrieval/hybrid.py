@@ -12,6 +12,16 @@ documents being decided live in the same tables and must never retrieve
 each other: a policy question that returns an invoice is wrong, and an
 invoice that quietly becomes policy is worse. `collection=None` searches
 everything, which is what open chat wants and what a decision must never do.
+
+**Degrading.** When the install has no usable embedding provider, the vector
+half is skipped and retrieval runs on FTS alone rather than failing. A
+lexical answer with citations beats a 500, and the grounding validator still
+gates whether anything is claimed from it. But degraded retrieval that
+nobody can see is exactly the failure this codebase keeps running into, so
+it is logged on every search and reported by `/health/ready`. Coverage
+checking (app/decisions/coverage.py) is what makes it tolerable for
+decisions: a rule that applies is pulled in by id whether or not ranking
+found it.
 """
 
 import uuid
@@ -23,7 +33,11 @@ from sqlalchemy import text
 from app.config import settings
 from app.db.engine import SessionLocal
 from app.db.models import Collection
+from app.llm.embeddings import embeddings_available
+from app.logging import get_logger
 from app.retrieval.embeddings import embed_query
+
+log = get_logger(__name__)
 
 
 @dataclass
@@ -184,13 +198,27 @@ def hybrid_search(
     default for chat and the wrong one for a decision.
     """
     candidate_k = settings.retrieval_candidate_k
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        embedding_future = pool.submit(embed_query, query)
-        fts_future = pool.submit(_fts_search, user_id, query, candidate_k, collection)
-        vector_ids = _vector_search(user_id, embedding_future.result(), candidate_k, collection)
-        fts_ids = fts_future.result()
+    available, reason = embeddings_available()
 
-    fused = rrf_fuse([vector_ids, fts_ids], k=settings.retrieval_rrf_k)
+    if not available:
+        # FTS alone. Said out loud on every search: a corpus that quietly
+        # retrieves worse than it should is the hardest kind of bug to see.
+        log.warning("retrieval.degraded", mode="fts_only", reason=reason)
+        rankings = [_fts_search(user_id, query, candidate_k, collection)]
+    else:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            embedding_future = pool.submit(embed_query, query)
+            fts_future = pool.submit(_fts_search, user_id, query, candidate_k, collection)
+            try:
+                vector_ids = _vector_search(
+                    user_id, embedding_future.result(), candidate_k, collection
+                )
+            except Exception as exc:  # noqa: BLE001 -- a provider outage is not a 500
+                log.warning("retrieval.degraded", mode="fts_only", reason=str(exc))
+                vector_ids = []
+            rankings = [vector_ids, fts_future.result()]
+
+    fused = rrf_fuse(rankings, k=settings.retrieval_rrf_k)
     limit = top_k if top_k is not None else settings.retrieval_top_k
     radius = settings.retrieval_neighbor_radius
 
