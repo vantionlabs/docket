@@ -9,5 +9,6 @@ from app.workflows import (  # noqa: F401
     decision_execute,
     document_decide,
     document_ingest,
+    webhook_document,
     webhook_example,
 )

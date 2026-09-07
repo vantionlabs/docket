@@ -1,9 +1,13 @@
 """Cloudflare R2 (S3-compatible) storage.
 
-Uploads never pass through the API: the browser PUTs directly to R2 with a
-presigned URL. The presigned PUT signs the Content-Type, so the browser
-must send exactly the Content-Type it requested the URL for. Bucket CORS
-must allow PUT from the frontend origin (see docs/setup-r2.md).
+Browser uploads never pass through the API: the browser PUTs directly to R2
+with a presigned URL. The presigned PUT signs the Content-Type, so the
+browser must send exactly the Content-Type it requested the URL for. Bucket
+CORS must allow PUT from the frontend origin (see docs/setup-r2.md).
+
+`upload_bytes` is the server-side path, for documents that arrive by
+webhook rather than from a browser. There is no presigning to do: the bytes
+are already here.
 """
 
 import uuid
@@ -36,6 +40,14 @@ def presign_put(key: str, content_type: str, expires_seconds: int = 600) -> str:
         Params={"Bucket": settings.r2_bucket, "Key": key, "ContentType": content_type},
         ExpiresIn=expires_seconds,
     )
+
+
+def upload_bytes(key: str, data: bytes, content_type: str) -> str:
+    """Store bytes the server already holds. Returns the key."""
+    r2_client().put_object(
+        Bucket=settings.r2_bucket, Key=key, Body=data, ContentType=content_type
+    )
+    return key
 
 
 def download_bytes(key: str) -> bytes:

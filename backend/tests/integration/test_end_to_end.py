@@ -247,3 +247,85 @@ def test_approval_executes_once_even_when_the_event_is_replayed(db, user, seeded
 
     # And approving again emits the same event, not a second one.
     assert emit_execute(db, decision, action="approve_for_payment").id == event.id
+
+
+def test_upload_intake_queues_a_decision_not_an_ingest(db, user, org, monkeypatch):
+    """The gap M3 shipped with: uploading an invoice ingested it for chat and
+    never decided it. The pipeline a document enters follows from what it is."""
+    from app.core.document_intake import receive_document
+
+    queued: list[str] = []
+    monkeypatch.setattr(
+        "app.core.intake.dispatch_event", lambda event_id: queued.append(str(event_id))
+    )
+
+    invoice = SourceDocument(
+        user_id=user.id,
+        org_id=org,
+        collection=Collection.transactional,
+        filename="invoice.md",
+        r2_key=f"test/{uuid.uuid4()}",
+        content_type="text/markdown",
+    )
+    policy = SourceDocument(
+        user_id=user.id,
+        org_id=org,
+        collection=Collection.policy,
+        filename="policy.md",
+        r2_key=f"test/{uuid.uuid4()}",
+        content_type="text/markdown",
+    )
+    db.add_all([invoice, policy])
+    db.commit()
+
+    invoice_event, created = receive_document(
+        db, invoice, source="upload", external_ref=f"upload:{invoice.id}"
+    )
+    assert created
+    assert invoice_event.type == "document.decide"
+
+    policy_event, created = receive_document(
+        db, policy, source="upload", external_ref=f"upload:{policy.id}"
+    )
+    assert created
+    assert policy_event.type == "document.ingest"
+
+    # And the intake rows exist, which is what the audit trail asks first.
+    from app.db.models import Intake
+
+    refs = set(
+        db.scalars(
+            select(Intake.external_ref).where(
+                Intake.document_id.in_({invoice.id, policy.id})
+            )
+        )
+    )
+    assert refs == {f"upload:{invoice.id}", f"upload:{policy.id}"}
+
+
+def test_the_same_delivery_twice_queues_one_decision(db, user, org, monkeypatch):
+    """A re-delivered webhook is one invoice, not two."""
+    from app.core.document_intake import receive_document
+
+    monkeypatch.setattr("app.core.intake.dispatch_event", lambda event_id: None)
+
+    document = SourceDocument(
+        user_id=user.id,
+        org_id=org,
+        collection=Collection.transactional,
+        filename="invoice.md",
+        r2_key=f"test/{uuid.uuid4()}",
+        content_type="text/markdown",
+    )
+    db.add(document)
+    db.commit()
+
+    first, created_first = receive_document(
+        db, document, source="webhook", external_ref="supplier-portal-88213"
+    )
+    second, created_second = receive_document(
+        db, document, source="webhook", external_ref="supplier-portal-88213"
+    )
+
+    assert created_first and first is not None
+    assert not created_second and second is None

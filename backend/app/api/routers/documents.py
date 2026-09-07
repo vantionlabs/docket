@@ -22,10 +22,10 @@ from app.api.schemas import (
 )
 from app.auth.access import require_document_access
 from app.auth.dependencies import CurrentUser, get_current_user
+from app.core.document_intake import receive_document
 from app.db.engine import get_db
-from app.db.models import DocumentStatus, Event, SourceDocument
+from app.db.models import DocumentStatus, SourceDocument
 from app.storage.r2 import delete_object, object_key, presign_put
-from app.worker.tasks import dispatch_event
 
 router = APIRouter(prefix="/documents", tags=["documents"], responses=UNAUTHORIZED)
 
@@ -71,11 +71,15 @@ def presign_upload(
     "/{document_id}/confirm",
     response_model=DocumentOut,
     status_code=202,
-    summary="Confirm an upload and start ingestion",
+    summary="Confirm an upload and start work on the document",
     description=(
-        "Marks the document `uploaded` and emits a `document.ingest` event. "
-        "A worker then chunks and embeds it; poll `GET /documents` for status "
-        "(`processing` → `ready`/`failed`)."
+        "Marks the document `uploaded`, records an intake, and queues what "
+        "the document is for.\n\n"
+        "A `policy` document is chunked, embedded and indexed into the "
+        "obligations coverage checking uses. A `transactional` document goes "
+        "straight to the decision pipeline and appears in the review queue. "
+        "Poll `GET /documents` for ingestion status, `GET /decisions` for the "
+        "decision."
     ),
     responses=NOT_FOUND,
 )
@@ -85,15 +89,7 @@ def confirm_upload(
     db: Session = Depends(get_db),
 ) -> SourceDocument:
     doc = require_document_access(db, document_id, user.id)
-    doc.status = DocumentStatus.uploaded
-    event = Event(
-        user_id=user.id,
-        type="document.ingest",
-        payload={"document_id": str(doc.id)},
-    )
-    db.add(event)
-    db.commit()
-    dispatch_event(event.id)
+    receive_document(db, doc, source="upload", external_ref=f"upload:{doc.id}")
     return doc
 
 
