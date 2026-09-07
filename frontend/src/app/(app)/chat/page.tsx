@@ -4,12 +4,26 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { Composer } from "@/components/chat/composer";
 import type { Thread } from "@/components/chat/thread-sidebar";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
 
-/** New-chat landing: creating a thread on first message keeps /threads clean. */
+/**
+ * New-chat landing. Creating the thread on the first message keeps
+ * /threads free of empty ones.
+ *
+ * The suggestions are policy questions rather than generic prompts: this
+ * chat is for interrogating the rules the pipeline decides against, and an
+ * empty box with no starting point makes people ask it to summarise things
+ * instead, which it is not for.
+ */
+const SUGGESTIONS = [
+  "Who must approve an invoice of EUR 4,000 including VAT?",
+  "When is a purchase order required?",
+  "What happens to an invoice in a currency other than euro?",
+  "Which suppliers are on the approved list?",
+];
+
 export default function NewChatPage() {
   const router = useRouter();
   const qc = useQueryClient();
@@ -29,32 +43,47 @@ export default function NewChatPage() {
     },
   });
 
-  function start(e: React.FormEvent) {
-    e.preventDefault();
-    const text = input.trim();
-    if (!text || create.isPending) return;
-    create.mutate(text);
+  function start(text: string) {
+    const trimmed = text.trim();
+    if (!trimmed || create.isPending) return;
+    create.mutate(trimmed);
   }
 
   return (
     <div className="flex h-screen flex-col items-center justify-center px-6">
-      <h1 className="text-2xl font-semibold tracking-tight">Ask your documents</h1>
-      <p className="text-muted-foreground mt-2 max-w-md text-center text-sm">
-        Answers are grounded in the documents you upload, with citations back
-        to the source passage.
-      </p>
-      <form onSubmit={start} className="mt-8 flex w-full max-w-xl gap-2">
-        <Input
-          autoFocus
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask a question…"
-          className="h-11 flex-1"
-        />
-        <Button type="submit" size="lg" disabled={create.isPending || !input.trim()}>
-          Send
-        </Button>
-      </form>
+      <div className="w-full max-w-2xl">
+        <h1 className="text-center text-2xl font-semibold tracking-tight">
+          Ask your policy
+        </h1>
+        <p className="text-muted-foreground mt-2 text-center text-sm">
+          Answers come from the documents you have uploaded, with the clause
+          behind every claim. Anything that cannot be verified is not shown.
+        </p>
+
+        <div className="mt-8">
+          <Composer
+            autoFocus
+            value={input}
+            onChange={setInput}
+            onSubmit={() => start(input)}
+            busy={create.isPending}
+            placeholder="Ask a question…"
+          />
+        </div>
+
+        <div className="mt-4 flex flex-wrap justify-center gap-2">
+          {SUGGESTIONS.map((suggestion) => (
+            <button
+              key={suggestion}
+              onClick={() => start(suggestion)}
+              disabled={create.isPending}
+              className="bg-card text-muted-foreground hover:text-foreground hover:border-foreground/20 rounded-full border px-3 py-1.5 text-xs transition-colors disabled:opacity-50"
+            >
+              {suggestion}
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

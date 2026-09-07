@@ -3,9 +3,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { use, useEffect, useRef, useState } from "react";
 
+import { Composer } from "@/components/chat/composer";
 import { MessageList } from "@/components/chat/message-list";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { ThinkingState } from "@/components/chat/thinking-state";
 import { useAppChat } from "@/hooks/use-app-chat";
 import { api } from "@/lib/api";
 
@@ -30,7 +30,8 @@ export default function ChatThreadPage({
   params: Promise<{ threadId: string }>;
 }) {
   const { threadId } = use(params);
-  const { messages, sendMessage, status, setMessages } = useAppChat(threadId);
+  const { messages, sendMessage, setMessages, stage, busy, streamingId, stop } =
+    useAppChat(threadId);
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const kickoffSent = useRef(false);
@@ -73,10 +74,7 @@ export default function ChatThreadPage({
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const busy = status === "submitted" || status === "streaming";
-
-  function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  function onSubmit() {
     const text = input.trim();
     if (!text || busy) return;
     setInput("");
@@ -90,24 +88,27 @@ export default function ChatThreadPage({
           {!historyLoaded ? (
             <p className="text-muted-foreground text-sm">Loading…</p>
           ) : (
-            <MessageList messages={messages} />
+            <MessageList messages={messages} streamingId={streamingId} />
           )}
-          {busy && <p className="text-muted-foreground mt-4 text-sm">Thinking…</p>}
+          {busy && <ThinkingState stage={stage ?? "analyzing"} />}
           <div ref={bottomRef} />
         </div>
       </div>
-      <div className="border-t px-6 py-4">
-        <form onSubmit={onSubmit} className="mx-auto flex max-w-2xl gap-2">
-          <Input
+      <div className="px-6 pb-6">
+        <div className="mx-auto max-w-2xl">
+          <Composer
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={setInput}
+            onSubmit={onSubmit}
+            onStop={stop}
+            busy={busy}
             placeholder="Ask a follow-up…"
-            className="h-11 flex-1"
           />
-          <Button type="submit" size="lg" disabled={busy || !input.trim()}>
-            Send
-          </Button>
-        </form>
+          <p className="text-muted-foreground mt-2 text-center text-[11px]">
+            Answers are grounded in your documents. An answer that cannot be
+            verified is not shown.
+          </p>
+        </div>
       </div>
     </div>
   );
