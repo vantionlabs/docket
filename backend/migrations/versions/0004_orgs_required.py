@@ -32,33 +32,41 @@ REQUIRED = ("intakes", "extractions", "decisions", "rules", "executions")
 
 def upgrade() -> None:
     # 1. An org per existing user, named from the email like the app does.
+    # One statement, so the pairing is materialised once. The earlier
+    # version inserted orgs and memberships separately and joined them by
+    # row_number() over each table: with every row created in the same
+    # transaction, `created_at` ties and the two orderings fall back to
+    # random uuids, so users got each other's org names. Every user still
+    # ended up owning exactly one org, which is why it survived a structural
+    # check and only showed up against realistic emails.
     op.execute(
         """
-        INSERT INTO organizations (id, name, created_at)
-        SELECT gen_random_uuid(),
-               initcap(replace(split_part(split_part(u.email, '@', 2), '.', 1), '-', ' ')),
-               now()
-        FROM users u
-        WHERE NOT EXISTS (SELECT 1 FROM memberships m WHERE m.user_id = u.id)
-        """
-    )
-
-    # 2. Own it. The org just created for a user is the newest one with no
-    #    members, matched back by row order.
-    op.execute(
-        """
+        WITH pairs AS (
+            SELECT u.id AS user_id,
+                   gen_random_uuid() AS org_id,
+                   -- Mirrors _default_org_name in app/auth/orgs.py: a
+                   -- company domain names the org, a consumer one names the
+                   -- person. The two must agree, or a backfilled org is
+                   -- named differently from one created at registration.
+                   initcap(replace(replace(
+                       CASE
+                           WHEN lower(split_part(u.email, '@', 2)) IN (
+                               'gmail.com', 'outlook.com', 'hotmail.com',
+                               'icloud.com', 'proton.me'
+                           )
+                           THEN split_part(u.email, '@', 1)
+                           ELSE split_part(split_part(u.email, '@', 2), '.', 1)
+                       END, '-', ' '), '.', ' ')) AS org_name
+            FROM users u
+            WHERE NOT EXISTS (SELECT 1 FROM memberships m WHERE m.user_id = u.id)
+        ),
+        created AS (
+            INSERT INTO organizations (id, name, created_at)
+            SELECT org_id, org_name, now() FROM pairs
+            RETURNING id
+        )
         INSERT INTO memberships (id, org_id, user_id, role, approval_limit, created_at)
-        SELECT gen_random_uuid(), o.id, u.id, 'owner', NULL, now()
-        FROM (
-            SELECT id, row_number() OVER (ORDER BY created_at, id) AS rn
-            FROM organizations
-            WHERE NOT EXISTS (SELECT 1 FROM memberships m WHERE m.org_id = organizations.id)
-        ) o
-        JOIN (
-            SELECT id, row_number() OVER (ORDER BY created_at, id) AS rn
-            FROM users
-            WHERE NOT EXISTS (SELECT 1 FROM memberships m WHERE m.user_id = users.id)
-        ) u ON u.rn = o.rn
+        SELECT gen_random_uuid(), org_id, user_id, 'owner', NULL, now() FROM pairs
         """
     )
 
