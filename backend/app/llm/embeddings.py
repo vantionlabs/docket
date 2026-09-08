@@ -19,14 +19,21 @@ crash they worked around. `embeddings_available()` reports whether the
 configured provider can actually be used, and retrieval asks before trying.
 """
 
+import time
 from functools import lru_cache
 from typing import Any, Literal
 
 import httpx
 
 from app.config import settings
+from app.logging import get_logger
 
-_BATCH_SIZE = 128
+log = get_logger(__name__)
+
+# Voyage rate-limits per minute and rejects very large batches, so keep the
+# batch modest and retry rather than racing.
+_BATCH_SIZE = 64
+_MAX_ATTEMPTS = 6
 _VOYAGE_URL = "https://api.voyageai.com/v1/embeddings"
 
 InputType = Literal["query", "document"]
@@ -132,17 +139,35 @@ def _voyage_embed(batch: list[str], input_type: InputType) -> tuple[list[list[fl
     if not settings.voyage_api_key:
         raise ValueError("EMBEDDING_PROVIDER is voyage but VOYAGE_API_KEY is unset")
 
-    response = httpx.post(
-        _VOYAGE_URL,
-        headers={"Authorization": f"Bearer {settings.voyage_api_key}"},
-        json={
-            "input": batch,
-            "model": settings.embedding_model,
-            "input_type": input_type,
-            "output_dimension": settings.embedding_dimensions,
-        },
-        timeout=60,
-    )
+    payload = {
+        "input": batch,
+        "model": settings.embedding_model,
+        "input_type": input_type,
+        "output_dimension": settings.embedding_dimensions,
+    }
+
+    # Embedding providers rate-limit hard, and ingesting a real corpus means
+    # a burst of calls in a few seconds. Without this, the first document of
+    # any decent size fails the whole ingest run.
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
+        response = httpx.post(
+            _VOYAGE_URL,
+            headers={"Authorization": f"Bearer {settings.voyage_api_key}"},
+            json=payload,
+            timeout=60,
+        )
+        if response.status_code != 429:
+            break
+        if attempt == _MAX_ATTEMPTS:
+            response.raise_for_status()
+        # Honour Retry-After when the provider sends one; it knows better
+        # than an exponential guess.
+        delay = float(response.headers.get("retry-after") or 2 ** attempt)
+        log.warning(
+            "embeddings.rate_limited", attempt=attempt, sleeping=delay, batch=len(batch)
+        )
+        time.sleep(delay)
+
     response.raise_for_status()
     body = response.json()
     # Voyage does not promise ordered results; index is authoritative.

@@ -105,25 +105,21 @@ def _llm_context(chunk_content: str, filename: str, document_text: str) -> str:
     context is worse than one embedded with it, and both are better than a
     document that never got ingested.
     """
-    from app.observability.usage import record_usage
+    from app.observability.usage import record_run_usage
 
     try:
         result = _agent().run_sync(
             f"DOCUMENT ({filename}):\n{document_text[:20000]}\n\nPASSAGE:\n{chunk_content}"
         )
-        usage = result.usage()
-        record_usage(
-            operation="contextualize",
-            model=settings.grounding_model,
-            input_tokens=getattr(usage, "input_tokens", None)
-            or getattr(usage, "request_tokens", 0)
-            or 0,
-            output_tokens=getattr(usage, "output_tokens", None)
-            or getattr(usage, "response_tokens", 0)
-            or 0,
-        )
-        return result.output.strip()
     except Exception:  # noqa: BLE001 -- context is an improvement, not a requirement
         log.warning("contextualize.failed", filename=filename, falling_back_to="structural")
         parts = [p for p in (filename, *heading_path(document_text, chunk_content)) if p]
         return " > ".join(parts)
+
+    # Accounting sits OUTSIDE the try above on purpose. It used to be inside
+    # it, and `result.usage()` raised TypeError on every call, so a
+    # successful generation was thrown away and this strategy silently fell
+    # back to structural every single time. A failure to count tokens must
+    # never discard work that succeeded.
+    record_run_usage(result, operation="contextualize", model=settings.grounding_model)
+    return result.output.strip()

@@ -55,21 +55,8 @@ def run_turn(question: str, history: list[dict], deps: AgentDeps) -> GroundedAns
 
 
 def _record_agent_usage(result, deps: AgentDeps) -> None:
-    from app.observability.usage import record_usage
+    from app.observability.usage import record_run_usage
 
-    try:
-        usage = result.usage()
-        # PydanticAI has renamed these across versions; support both.
-        input_tokens = getattr(usage, "input_tokens", None) or getattr(usage, "request_tokens", 0)
-        output_tokens = (
-            getattr(usage, "output_tokens", None) or getattr(usage, "response_tokens", 0)
-        )
-        record_usage(
-            operation="chat",
-            model=settings.chat_model,
-            input_tokens=input_tokens or 0,
-            output_tokens=output_tokens or 0,
-            user_id=deps.user_id,
-        )
-    except Exception:  # noqa: BLE001 — usage logging must never break a turn
-        pass
+    record_run_usage(
+        result, operation="chat", model=settings.chat_model, user_id=deps.user_id
+    )

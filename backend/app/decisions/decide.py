@@ -126,28 +126,19 @@ def judge_citations(
     user_id: uuid.UUID | None = None,
 ) -> list[int]:
     """Indices the judge rejects. Empty means every citation is supported."""
-    from app.observability.usage import record_usage
+    from app.observability.usage import record_run_usage
 
     payload = "\n\n".join(
         f"[{index}] excerpt from {clause.ref}:\n{excerpt}" for index, clause, excerpt in cited
     )
     result = _judge_agent().run_sync(f"RATIONALE:\n{rationale}\n\nCITATIONS:\n{payload}")
 
-    try:
-        usage = result.usage()
-        record_usage(
-            operation="decision_grounding",
-            model=settings.grounding_model,
-            input_tokens=getattr(usage, "input_tokens", None)
-            or getattr(usage, "request_tokens", 0)
-            or 0,
-            output_tokens=getattr(usage, "output_tokens", None)
-            or getattr(usage, "response_tokens", 0)
-            or 0,
-            user_id=user_id,
-        )
-    except Exception:  # noqa: BLE001 -- usage logging must not break validation
-        pass
+    record_run_usage(
+        result,
+        operation="decision_grounding",
+        model=settings.grounding_model,
+        user_id=user_id,
+    )
 
     parsed = result.output
     if parsed is None:
@@ -243,7 +234,7 @@ def decide_invoice(
     and for tests, not as a production setting: skipping it means a
     correctly quoted but irrelevant clause passes.
     """
-    from app.observability.usage import record_usage
+    from app.observability.usage import record_run_usage
 
     clauses = corpus.retrieve(invoice_query(invoice), top_k=top_k)
     if not clauses:
@@ -270,21 +261,12 @@ def decide_invoice(
     result = _agent().run_sync(prompt)
     decision: Decision = result.output
 
-    try:
-        usage = result.usage()
-        record_usage(
-            operation="decision",
-            model=settings.chat_model,
-            input_tokens=getattr(usage, "input_tokens", None)
-            or getattr(usage, "request_tokens", 0)
-            or 0,
-            output_tokens=getattr(usage, "output_tokens", None)
-            or getattr(usage, "response_tokens", 0)
-            or 0,
-            user_id=user_id,
-        )
-    except Exception:  # noqa: BLE001 -- usage logging must not break the decision
-        pass
+    record_run_usage(
+        result,
+        operation="decision",
+        model=settings.chat_model,
+        user_id=user_id,
+    )
 
     outcome = check_citations(decision, clauses)
     outcome.coverage = getattr(corpus, "report", None)

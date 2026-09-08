@@ -74,26 +74,17 @@ def _judge(
     answer: str, citations: list[ValidatedCitation], user_id: uuid.UUID | None = None
 ) -> list[int]:
     """Return the indices the LLM judge rejects. Empty list = all supported."""
-    from app.observability.usage import record_usage
+    from app.observability.usage import record_run_usage
 
     payload = "\n\n".join(f"[{c.index}] excerpt from {c.filename}:\n{c.excerpt}" for c in citations)
     result = _judge_agent().run_sync(f"ANSWER:\n{answer}\n\nCITATIONS:\n{payload}")
 
-    try:
-        usage = result.usage()
-        record_usage(
-            operation="grounding",
-            model=settings.grounding_model,
-            input_tokens=getattr(usage, "input_tokens", None)
-            or getattr(usage, "request_tokens", 0)
-            or 0,
-            output_tokens=getattr(usage, "output_tokens", None)
-            or getattr(usage, "response_tokens", 0)
-            or 0,
-            user_id=user_id,
-        )
-    except Exception:  # noqa: BLE001 — usage logging must not break validation
-        pass
+    record_run_usage(
+        result,
+        operation="grounding",
+        model=settings.grounding_model,
+        user_id=user_id,
+    )
 
     parsed = result.output
     if parsed is None:

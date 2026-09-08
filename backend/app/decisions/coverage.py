@@ -240,7 +240,7 @@ def extract_obligations(clause_text: str, clause_ref: str) -> list[dict]:
 
     from app.config import settings
     from app.llm.providers import grounding_model
-    from app.observability.usage import record_usage
+    from app.observability.usage import record_run_usage
 
     class _Obligation(BaseModel):
         dimension: Dimension
@@ -254,20 +254,11 @@ def extract_obligations(clause_text: str, clause_ref: str) -> list[dict]:
     agent = Agent(grounding_model(), output_type=_Obligations, instructions=_EXTRACT_PROMPT)
     result = agent.run_sync(f"CLAUSE ({clause_ref}):\n{clause_text}")
 
-    try:
-        usage = result.usage()
-        record_usage(
-            operation="obligation_extraction",
-            model=settings.grounding_model,
-            input_tokens=getattr(usage, "input_tokens", None)
-            or getattr(usage, "request_tokens", 0)
-            or 0,
-            output_tokens=getattr(usage, "output_tokens", None)
-            or getattr(usage, "response_tokens", 0)
-            or 0,
-        )
-    except Exception:  # noqa: BLE001 -- usage logging must not break indexing
-        pass
+    record_run_usage(
+        result,
+        operation="obligation_extraction",
+        model=settings.grounding_model,
+    )
 
     return [o.model_dump(mode="json") for o in result.output.obligations]
 

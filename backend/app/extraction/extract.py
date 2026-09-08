@@ -58,26 +58,17 @@ def extract[T: BaseModel](
     user_id: uuid.UUID | None = None,
 ) -> ExtractionResult[T]:
     """Extract `output_type` from `document_text` and verify every span."""
-    from app.observability.usage import record_usage
+    from app.observability.usage import record_run_usage
 
     result = _agent(output_type).run_sync(f"DOCUMENT:\n{document_text}")
     data: T = result.output
 
-    try:
-        usage = result.usage()
-        record_usage(
-            operation="extraction",
-            model=settings.chat_model,
-            input_tokens=getattr(usage, "input_tokens", None)
-            or getattr(usage, "request_tokens", 0)
-            or 0,
-            output_tokens=getattr(usage, "output_tokens", None)
-            or getattr(usage, "response_tokens", 0)
-            or 0,
-            user_id=user_id,
-        )
-    except Exception:  # noqa: BLE001 -- usage logging must not break extraction
-        pass
+    record_run_usage(
+        result,
+        operation="extraction",
+        model=settings.chat_model,
+        user_id=user_id,
+    )
 
     verification = verify(data, document_text)
     if verification.unverified:

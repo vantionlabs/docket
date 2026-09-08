@@ -44,9 +44,12 @@ from app.db.models import (  # noqa: E402
     User,
 )
 from app.ingestion.chunking import chunk_text  # noqa: E402
+from app.ingestion.context import contextualize  # noqa: E402
+from app.llm.embeddings import embed_documents, embeddings_available  # noqa: E402
 from app.workflows.document_decide import DocumentDecideWorkflow  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parents[1] / "evals/fixtures"
+CORPUS_DIR = FIXTURES / "corpus"
 POLICY = FIXTURES / "procurement-policy.md"
 INVOICES = sorted((FIXTURES / "invoices").glob("*.md"))
 
@@ -99,17 +102,25 @@ def _user(db) -> User:
     return row
 
 
-def _policy(db, user, org_id) -> SourceDocument:
-    """Load the policy corpus into the policy collection.
+def _policy_documents() -> list[Path]:
+    """The corpus to load: the generated one if it exists, else the single
+    hand-written policy.
 
-    Embeddings are zeros: seeding should not require an embedding provider,
-    and Postgres FTS carries retrieval well enough for a demo. Re-embed for
-    real use.
+    The generated corpus has distractors in it, which is the only version
+    where retrieval can actually fail and therefore the only version worth
+    measuring against.
     """
+    generated = sorted(CORPUS_DIR.glob("*.md"))
+    return generated or [POLICY]
+
+
+def _policy(db, user, org_id, path: Path) -> SourceDocument:
+    """Load one policy document into the policy collection."""
     existing = db.scalar(
         select(SourceDocument).where(
             SourceDocument.org_id == org_id,
             SourceDocument.collection == Collection.policy,
+            SourceDocument.filename == path.name,
         )
     )
     if existing is not None:
@@ -119,7 +130,7 @@ def _policy(db, user, org_id) -> SourceDocument:
         user_id=user.id,
         org_id=org_id,
         collection=Collection.policy,
-        filename=POLICY.name,
+        filename=path.name,
         r2_key=f"seed/policy/{uuid.uuid4()}",
         content_type="text/markdown",
         status=DocumentStatus.ready,
@@ -127,8 +138,24 @@ def _policy(db, user, org_id) -> SourceDocument:
     db.add(doc)
     db.commit()
 
-    chunks = chunk_text(POLICY.read_text(encoding="utf-8"), target_tokens=180)
-    for chunk in chunks:
+    document_text = path.read_text(encoding="utf-8")
+    chunks = chunk_text(document_text, target_tokens=180)
+
+    # Embed the way ingestion does: contextualized, as documents. Falls back
+    # to zero vectors only when no provider is configured, so seeding still
+    # works on a machine with no key.
+    available, reason = embeddings_available()
+    if available:
+        vectors = embed_documents(
+            [
+                contextualize(chunk.content, path.name, document_text=document_text)
+                for chunk in chunks
+            ]
+        )
+    else:
+        vectors = [[0.0] * DIMENSIONS for _ in chunks]
+
+    for chunk, vector in zip(chunks, vectors, strict=True):
         db.add(
             DocumentChunk(
                 document_id=doc.id,
@@ -137,11 +164,11 @@ def _policy(db, user, org_id) -> SourceDocument:
                 collection=Collection.policy,
                 chunk_index=chunk.index,
                 content=chunk.content,
-                embedding=[0.0] * DIMENSIONS,
+                embedding=vector,
             )
         )
     db.commit()
-    print(f"loaded policy: {POLICY.name}, {len(chunks)} chunks")
+    print(f"  {path.name:44} {len(chunks):3} chunks")
     _index_obligations(db, doc, org_id)
     return doc
 
@@ -255,7 +282,11 @@ def main() -> int:
     with SessionLocal() as db:
         user = _user(db)
         org_id = ensure_personal_org(db, user.id, user.email).org_id
-        _policy(db, user, org_id)
+
+        documents = _policy_documents()
+        print(f"loading policy corpus ({len(documents)} documents):")
+        for path in documents:
+            _policy(db, user, org_id, path)
 
         print(f"deciding {args.invoices} invoices:")
         for path in INVOICES[: args.invoices]:
