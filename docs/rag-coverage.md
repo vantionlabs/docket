@@ -191,3 +191,75 @@ way the dimension triggers already are. That is the natural next step for
 `coverage.py`, and it is worth doing before the escalation rate means
 anything, because eight irrelevant clauses in the evidence is a good way to
 make a judge reject a citation.
+
+---
+
+## Update, 8 September: the eval was measuring a different system
+
+The plan for M5 was "fix the grounding judge". Grounding passed on 9 of 15
+and recall was at ceiling, so the judge was the obvious suspect.
+
+It was the wrong suspect, and finding that out required fixing the
+instrument first.
+
+**The eval ran a pipeline that does not exist in production.** It built an
+in-memory corpus from one markdown file and retrieved lexically: no
+embeddings, no distractor documents, and obligations extracted fresh from
+that file rather than the scoped ones in the database. Every number in this
+document before today came from that. A `--live` mode now runs the real
+path, and it exposed two bugs within six cases that the old mode was
+structurally incapable of showing.
+
+**Bug one: the model was given seventeen UUIDs and asked to copy one.** The
+in-memory corpus labels clauses `clause-1`, `clause-2`. The database-backed
+one uses chunk UUIDs, and `cite_block` put them in front of the model as the
+handle to cite. Seventeen 36-character hex strings in one prompt, and it did
+what anyone would: quoted the right words and named the wrong clause. One
+citation quoted `## 9. Lucerne Publishing BV` and attributed it to the
+procurement policy header. The verbatim check caught it, correctly, and
+reported it as a grounding failure — so the symptom looked exactly like a
+judge problem.
+
+Fixed with short turn-local labels, resolved back to real ids in code.
+
+**Bug two, revealed by fixing bug one.** The render was:
+
+```
+[clause-1] approved-suppliers.md, 10. Trey Research BV
+```
+
+Two identifier-shaped things side by side. The model stopped citing UUIDs
+and started citing the human-readable source instead. The id now sits alone
+on its own line, and resolution accepts the label, the id or the source.
+
+**Lenient on the handle, strict on the words.** Which string the model
+copied buys no safety. The verbatim check does, and it is unchanged: the
+quoted words must appear in whichever clause resolved.
+
+Six-case smoke, before and after:
+
+| | before | after |
+|---|---|---|
+| verbatim failures | 3 | 0 |
+| attribution failures | 1 | 0 |
+| judge rejections | 2 | 6 |
+| recall | 1.000 | 1.000 |
+
+Still nothing grounded — but now there is exactly one failure mode instead
+of three, and it is the one M5 was always about.
+
+## The general lesson, which is the point
+
+Three times now the same thing has happened. A number looked fine, and it
+was measuring something other than what it claimed:
+
+- The corpus had ten clauses and `top_k` was eight, so recall of 1.000 was
+  nearly unavoidable.
+- The eval passed no rule, so `auto_approve` was unreachable and zero false
+  auto-approvals meant the failure was impossible rather than avoided.
+- The eval ran an in-memory lexical corpus, so two mis-attribution bugs in
+  the real retrieval path were invisible to every measurement taken.
+
+None of these were caught by tests. All three were caught by making the
+measurement match the system, and each one changed what the next piece of
+work should be. That is worth more than any single fix in this document.
