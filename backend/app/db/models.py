@@ -556,6 +556,19 @@ class PolicyObligation(Base):
     dimension: Mapped[str] = mapped_column(Text, index=True)
     """app.decisions.coverage.Dimension. A closed set: a dimension the code
     cannot evaluate is one that cannot be checked."""
+    schema_name: Mapped[str] = mapped_column(Text, default="invoice", index=True)
+    """Which kind of document this rule governs.
+
+    A policy corpus contains more than the one policy that applies. A travel
+    and expenses policy has a threshold ladder too, and it governs expense
+    claims; requiring its clauses when deciding a supplier invoice stuffs the
+    evidence with rules that do not apply and makes the decision worse. Only
+    a multi-document corpus reveals this, which is why it took one to find it.
+    """
+    in_force: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    """False for a superseded version retained for audit. The 2024 policy
+    with the old thresholds is exactly the clause you least want pulled into
+    a decision about a 2026 invoice."""
     summary: Mapped[str] = mapped_column(Text)
     clause_ref: Mapped[str] = mapped_column(Text)
     always_applies: Mapped[bool] = mapped_column(Boolean, default=False)

@@ -201,7 +201,9 @@ def _index_obligations(db, doc, org_id) -> None:
         .order_by(DocumentChunk.chunk_index)
     ):
         ref = _clause_ref(doc.filename, chunk.content, chunk.chunk_index)
-        for obligation in extract_obligations(chunk.content, ref):
+        for obligation in extract_obligations(
+                chunk.content, ref, document_title=doc.filename
+            ):
             db.add(
                 PolicyObligation(
                     org_id=org_id,
@@ -210,6 +212,8 @@ def _index_obligations(db, doc, org_id) -> None:
                     dimension=obligation["dimension"],
                     summary=obligation["summary"],
                     clause_ref=ref,
+                    schema_name=obligation.get("governs", "invoice"),
+                    in_force=obligation.get("in_force", True),
                     always_applies=obligation.get("always_applies", False),
                     threshold=obligation.get("threshold"),
                 )

@@ -131,3 +131,63 @@ nothing.
 The order that follows from the numbers: fix grounding, not retrieval.
 Recall is at ceiling and the judge is rejecting 40 percent of decisions.
 Start by looking at what it rejects, with `--runs 5` as the measurement.
+
+---
+
+## Update, 8 September 2026: what a real corpus revealed
+
+Voyage embeddings and the seven-document corpus went in together, so hybrid
+retrieval ran for the first time and coverage checking met a corpus with
+more than one policy in it. Both changed the picture.
+
+**Retrieval ranks correctly and the distractors sit right behind it.** On
+"is a purchase order required above EUR 500?", the current policy takes
+ranks 1 and 2 and the *superseded 2024 policy* takes 3 and 4, carrying the
+old EUR 1,000 threshold. That is a different failure from the one coverage
+fixes: coverage catches a relevant clause that was not retrieved, this is an
+irrelevant one that was. The grounding judge is what has to catch it, and
+now there is a corpus where it can be tested.
+
+**Coverage was requiring rules from every policy in the org.** The check
+loaded all 130 obligations regardless of which document they came from, so
+a supplier invoice was being checked against expense-claim thresholds, capex
+approval limits, and a superseded policy's spend bands — and the repair step
+faithfully fetched all of those clauses into the evidence before the model
+decided. It made decisions worse, and no single-document corpus could ever
+have shown it.
+
+Obligations now carry `schema_name` and `in_force` (migration 0008),
+extracted with the document title in context because "up to EUR 1,500: the
+line manager may approve" reads identically whether it governs invoices or
+expense claims. After re-indexing:
+
+| document | obligations | govern invoices |
+|---|---|---|
+| procurement-policy.md | 27 | 27 |
+| delegation-of-authority.md | 20 | 19 |
+| approved-suppliers.md | 10 | 10 |
+| contracting-standards.md | 7 | 5 |
+| capital-expenditure.md | 7 | **0** |
+| procurement-policy-2024-superseded.md | 2 | **0** |
+| travel-and-expenses.md | 0 | **0** |
+
+Repair dropped from 15 clauses to 8 and the dangerous documents are out.
+
+## The next problem, precisely
+
+The eight clauses repair still pulls in are the delegation matrix's
+per-category ladders: Telecoms, Office Consumables, Catering, Legal
+Services, and so on, fetched for a *cleaning* invoice.
+
+They are not wrong to be obligations. They genuinely govern invoices, they
+are in force, and they are `amount` rules. The trouble is that `Dimension`
+is too coarse to express "this rule governs invoices **for telecoms**". Every
+invoice triggers `amount`, so every category ladder is required, every time.
+
+This is a modelling limit rather than a bug, and the fix is real work:
+obligations need applicability conditions of their own — a category, a
+supplier, a cost centre — evaluated against the extracted fields the same
+way the dimension triggers already are. That is the natural next step for
+`coverage.py`, and it is worth doing before the escalation rate means
+anything, because eight irrelevant clauses in the evidence is a good way to
+make a judge reject a citation.

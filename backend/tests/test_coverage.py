@@ -232,3 +232,43 @@ def test_clause_lookup_returns_only_what_was_asked_for(corpus):
 
 def test_isinstance_of_policy_clause(corpus):
     assert all(isinstance(c, PolicyClause) for c in corpus.retrieve("euro"))
+
+
+# --- obligation scope (found by a multi-document corpus) ----------------
+
+
+def test_load_obligations_filters_by_schema_and_force(monkeypatch):
+    """A policy corpus is not one policy.
+
+    Loading every obligation in the org meant a supplier invoice was checked
+    against expense-claim thresholds from the travel policy and spend limits
+    from a superseded 2024 version, and the repair step dutifully fetched
+    those clauses into the evidence. A single-document corpus cannot show
+    this; the first multi-document one showed it immediately.
+    """
+    from unittest.mock import MagicMock
+
+    from app.decisions.coverage import load_obligations
+
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = []
+    load_obligations(db, uuid.uuid4(), "invoice")
+
+    where = str(db.scalars.call_args[0][0])
+    assert "schema_name" in where, "obligations were not filtered by what they govern"
+    assert "in_force" in where, "superseded obligations were not filtered out"
+
+
+def test_an_unknown_dimension_is_skipped_not_assumed_covered():
+    """A rule this build cannot evaluate must not be silently treated as
+    satisfied. Skipping it is honest; counting it as covered is not."""
+    from unittest.mock import MagicMock
+
+    from app.decisions.coverage import load_obligations
+
+    row = MagicMock(dimension="a_dimension_from_the_future", threshold=None)
+    row.id = uuid.uuid4()
+    db = MagicMock()
+    db.scalars.return_value.all.return_value = [row]
+
+    assert load_obligations(db, uuid.uuid4(), "invoice") == []

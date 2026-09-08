@@ -134,7 +134,7 @@ class DecideAgainstPolicy(Node):
         )
         source = CoveredPolicy(
             RetrievedPolicy(doc.user_id),
-            obligations=load_obligations(ctx.db, doc.org_id),
+            obligations=load_obligations(ctx.db, doc.org_id, SCHEMA_NAME),
             triggered=triggered,
         )
 
