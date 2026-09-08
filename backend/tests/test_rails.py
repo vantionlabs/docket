@@ -251,3 +251,51 @@ def test_standing_dimensions_are_always_asked():
     assert any(r.startswith("2.") for r in refs)  # purchase orders
     assert any(r.startswith("3.") for r in refs)  # spend thresholds
     assert any(r.startswith("4.") for r in refs)  # approved suppliers
+
+
+# --- how a clause is identified to the model ----------------------------
+
+
+def test_a_citation_may_name_the_label_the_id_or_the_source():
+    """Resolve leniently, verify strictly.
+
+    The database path hands the model chunk UUIDs. Asking it to copy one of
+    seventeen 36-character hex strings back exactly produced citations that
+    quoted the right words under the wrong id. Turn-local labels fixed that
+    and the model then cited the human-readable source line instead, because
+    the render put both in front of it.
+
+    All three resolve. The check that matters is the verbatim one.
+    """
+    excerpt = "Up to EUR 1,000: the cost centre owner may approve."
+    for handle in ("clause-1", CLAUSE.id, CLAUSE.ref):
+        result = check_citations(
+            _decision(citations=[PolicyCitation(index=1, clause_id=handle, excerpt=excerpt)]),
+            [CLAUSE],
+            labels={"clause-1": CLAUSE},
+        )
+        assert result.grounding_passed, f"{handle!r} did not resolve"
+
+
+def test_a_wrong_quote_still_fails_however_the_clause_was_named():
+    """Lenient on the handle must not mean lenient on the words."""
+    result = check_citations(
+        _decision(
+            citations=[
+                PolicyCitation(
+                    index=1, clause_id="clause-1", excerpt="a sentence from a different clause"
+                )
+            ]
+        ),
+        [CLAUSE],
+        labels={"clause-1": CLAUSE},
+    )
+    assert not result.grounding_passed
+    assert "not verbatim" in result.grounding_failure
+
+
+def test_the_render_puts_the_id_on_its_own_line():
+    """Side by side, the source line reads like another identifier."""
+    block = CLAUSE.cite_block("clause-1")
+    assert block.startswith("[clause-1]\n")
+    assert "source: " in block

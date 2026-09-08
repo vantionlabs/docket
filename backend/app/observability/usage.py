@@ -55,6 +55,10 @@ def cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
         # what the log is for.
         key = key.rsplit("/", 1)[-1]
     if key not in PRICES:
+        # OpenRouter writes versions with dots (`claude-haiku-4.5`) where the
+        # first-party id uses dashes. Same model, same price.
+        key = key.replace(".", "-")
+    if key not in PRICES:
         # A dated snapshot like `claude-haiku-4-5-20251001` prices the same
         # as the model it pins. Falling back to the base id beats logging
         # zero and beats a table that needs a row per snapshot date.

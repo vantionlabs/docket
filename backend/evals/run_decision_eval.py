@@ -26,8 +26,16 @@ retrieved, and no downstream check can see that: the verbatim check, the
 judge and the reviewer all inspect what came back. So recall is measured per
 decision, against the obligations the document actually triggers.
 
-    uv run python evals/run_decision_eval.py
+    uv run python evals/run_decision_eval.py --live --dataset evals/decisions-train.jsonl
     uv run python evals/run_decision_eval.py --dataset evals/decisions.jsonl
+
+**Use `--live` for anything you intend to act on.** Without it the eval
+builds an in-memory corpus from one markdown file and retrieves lexically,
+which is not the pipeline that runs in production: no embeddings, no
+distractor documents, and obligations extracted fresh rather than the
+scoped ones in the database. Tuning against that measures a different
+system and the improvement will not transfer. The file mode stays because
+it needs no database and is useful for a quick structural check.
 
 Exits non-zero on any false auto-approve, or if recall falls below
 --min-recall.
@@ -42,9 +50,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[0].parent))
 
+from sqlalchemy import func  # noqa: E402
+
 from app.decisions.coverage import (  # noqa: E402
     CoverageReport,
     check_coverage,
+    subject_terms,
     triggered_dimensions,
 )
 from app.decisions.decide import decide_invoice  # noqa: E402
@@ -130,7 +141,7 @@ def load_cases(path: Path) -> list[Case]:
     return cases
 
 
-def run_case(case: Case, corpus: PolicyCorpus, obligations: list) -> Result:
+def run_case(case: Case, corpus, obligations: list) -> Result:
     path = FIXTURES / case.document
     text = parse_document(path.read_bytes(), "text/markdown", path.name)
 
@@ -139,7 +150,12 @@ def run_case(case: Case, corpus: PolicyCorpus, obligations: list) -> Result:
     arithmetic = check_invoice(invoice)
 
     triggered = triggered_dimensions(invoice, arithmetic_ok=arithmetic.ok)
-    source = CoveredPolicy(corpus, obligations=obligations, triggered=triggered)
+    source = CoveredPolicy(
+        corpus,
+        obligations=obligations,
+        triggered=triggered,
+        terms=subject_terms(invoice),
+    )
 
     result = decide_invoice(
         invoice,
@@ -157,7 +173,9 @@ def run_case(case: Case, corpus: PolicyCorpus, obligations: list) -> Result:
     # retrieved" beats "recall dropped to 0.8".
     if case.must_cite_dimensions:
         required = {d for d in triggered if str(d) in case.must_cite_dimensions}
-        report = check_coverage(obligations, required, {c.id for c in result.clauses})
+        report = check_coverage(
+            obligations, required, {c.id for c in result.clauses}, subject_terms(invoice)
+        )
     else:
         report = result.coverage or CoverageReport()
 
@@ -181,6 +199,20 @@ def main() -> int:
         help="fail below this mean retrieval recall (default 1.0: miss nothing)",
     )
     parser.add_argument(
+        "--live",
+        action="store_true",
+        help=(
+            "run against the real pipeline: the corpus in the database, Voyage "
+            "embeddings, and the scoped obligations. Needs DATABASE_URL and a "
+            "seeded org. Without it the eval measures a different system."
+        ),
+    )
+    parser.add_argument(
+        "--email",
+        default="demo@northwind.nl",
+        help="whose corpus to retrieve against in --live mode",
+    )
+    parser.add_argument(
         "--runs",
         type=int,
         default=1,
@@ -199,11 +231,21 @@ def main() -> int:
         )
 
     cases = load_cases(args.dataset)
-    corpus = PolicyCorpus.from_path(args.policy)
-    obligations = _obligations_from_corpus(corpus)
+
+    if args.live:
+        corpus, obligations, described = _live_source(args.email)
+    else:
+        corpus = PolicyCorpus.from_path(args.policy)
+        obligations = _obligations_from_corpus(corpus)
+        described = f"{args.policy.name} in memory, lexical retrieval"
+        print(
+            "WARNING: not --live. This measures an in-memory lexical corpus,\n"
+            "         not the pipeline that runs in production. Fine for a\n"
+            "         structural check; do not tune against it.\n"
+        )
 
     print(
-        f"{len(cases)} cases, {len(corpus.clauses)} clauses, "
+        f"{len(cases)} cases, {described}, "
         f"{len(obligations)} obligations, rule {EVAL_RULE.name!r} armed\n"
     )
     print(f"{'document':34} {'expected':20} {'actual':20} {'recall':>7}  grounded")
@@ -267,6 +309,60 @@ def main() -> int:
         return 1
     print("\nPASS")
     return 0
+
+
+def _live_source(email: str):
+    """The real retrieval path: database corpus, embeddings, scoped obligations.
+
+    Returns (source, obligations, description). The source is the same
+    `RetrievedPolicy` the decide workflow builds, so a number from here is a
+    number about the system that actually runs.
+    """
+    from sqlalchemy import select
+
+    from app.auth.orgs import active_membership
+    from app.db.engine import SessionLocal
+    from app.db.models import Collection, DocumentChunk, SourceDocument, User
+    from app.decisions.coverage import load_obligations
+    from app.decisions.policy import RetrievedPolicy
+    from app.llm.embeddings import embeddings_available
+
+    with SessionLocal() as db:
+        user = db.scalar(select(User).where(User.email == email))
+        if user is None:
+            raise SystemExit(
+                f"No user {email!r}. Run scripts/seed_demo.py first, or pass --email."
+            )
+        org_id = active_membership(db, user.id, user.email).org_id
+        obligations = load_obligations(db, org_id, "invoice")
+        documents = list(
+            db.scalars(
+                select(SourceDocument.filename).where(
+                    SourceDocument.org_id == org_id,
+                    SourceDocument.collection == Collection.policy,
+                )
+            )
+        )
+        chunks = db.scalar(
+            select(func.count())
+            .select_from(DocumentChunk)
+            .where(
+                DocumentChunk.org_id == org_id,
+                DocumentChunk.collection == Collection.policy,
+            )
+        )
+
+    if not obligations:
+        raise SystemExit(
+            "No obligations indexed for this org, so coverage checking is a "
+            "no-op and the run would measure retrieval alone. Ingest the policy "
+            "corpus first."
+        )
+
+    available, reason = embeddings_available()
+    mode = "hybrid" if available else f"FTS only ({reason})"
+    described = f"{len(documents)} policy documents, {chunks} chunks, {mode}"
+    return RetrievedPolicy(user.id), obligations, described
 
 
 def _obligations_from_corpus(corpus: PolicyCorpus) -> list:

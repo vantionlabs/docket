@@ -73,3 +73,13 @@ def test_an_unpriced_openrouter_model_is_still_zero_not_a_guess():
     """A model nobody has priced logs zero and says so, rather than
     borrowing a number from a model that happens to sound similar."""
     assert cost_usd("somevendor/some-model", 1_000_000, 0) == 0.0
+
+
+def test_openrouters_dotted_version_prices_the_same():
+    """OpenRouter writes `claude-haiku-4.5` where the first-party id is
+    `claude-haiku-4-5`. Without normalising, every judge call through
+    OpenRouter would log zero."""
+    assert cost_usd("anthropic/claude-haiku-4.5", 1_000_000, 0) == cost_usd(
+        "claude-haiku-4-5", 1_000_000, 0
+    )
+    assert cost_usd("anthropic/claude-sonnet-5", 1_000_000, 0) == 2.00

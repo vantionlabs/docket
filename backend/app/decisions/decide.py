@@ -52,9 +52,12 @@ Pick exactly one outcome:
   you are unsure. Choosing it is always allowed and is never a failure.
 
 Every claim in your rationale that rests on policy carries a [n] marker and
-a matching citation. Each citation names the clause id and quotes a short
-excerpt from that clause, copied character for character. You may only cite
-clauses given to you below. If no clause supports a point, do not make it.
+a matching citation. Each citation names the clause id EXACTLY as it appears
+in brackets below (they look like `clause-3`) and quotes a short excerpt from
+THAT clause, copied character for character. Quoting text from one clause and
+naming another is the most common way this goes wrong: check that the words
+you quote appear under the id you named. You may only cite clauses given to
+you below. If no clause supports a point, do not make it.
 
 Mark only claims about what policy requires. Do not attach a marker to a fact
 about the document itself: "the invoice carries PO-2026-0088" is something you
@@ -250,11 +253,18 @@ def decide_invoice(
             coverage=getattr(corpus, "report", None),
         )
 
+    # Short, turn-local handles. The real ids are chunk UUIDs, and asking a
+    # model to reproduce one of seventeen of those exactly produced citations
+    # that quoted the right words under the wrong id.
+    labels = {f"clause-{index}": clause for index, clause in enumerate(clauses, 1)}
+
     prompt = "\n\n".join(
         [
             _render(invoice, arithmetic_failures or [], unverified_fields or []),
             "POLICY CLAUSES:",
-            "\n\n".join(clause.cite_block() for clause in clauses),
+            "\n\n".join(
+                clause.cite_block(label) for label, clause in labels.items()
+            ),
         ]
     )
 
@@ -268,7 +278,7 @@ def decide_invoice(
         user_id=user_id,
     )
 
-    outcome = check_citations(decision, clauses)
+    outcome = check_citations(decision, clauses, labels)
     outcome.coverage = getattr(corpus, "report", None)
 
     # Stage two: a verbatim quote of the wrong clause passes the structural
@@ -286,9 +296,28 @@ def decide_invoice(
     return outcome
 
 
-def check_citations(decision: Decision, clauses: list[PolicyClause]) -> DecisionResult:
-    """Structural grounding: markers, allowlist, verbatim excerpts."""
-    offered = {clause.id: clause for clause in clauses}
+def check_citations(
+    decision: Decision,
+    clauses: list[PolicyClause],
+    labels: dict[str, PolicyClause] | None = None,
+) -> DecisionResult:
+    """Structural grounding: markers, allowlist, verbatim excerpts.
+
+    `labels` maps the turn-local handles the model was shown to the clauses
+    behind them. Both are accepted, so a caller that shows real ids still
+    works.
+    """
+    # Resolve leniently, verify strictly. A citation may name the turn-local
+    # label, the real clause id, or the human-readable source line; all three
+    # appear in front of the model and quibbling about which it copied buys
+    # no safety. What buys safety is the verbatim check below: the quoted
+    # words must actually appear in whichever clause was resolved.
+    offered: dict[str, PolicyClause] = {}
+    for clause in clauses:
+        offered[clause.id] = clause
+        offered[clause.ref] = clause
+    if labels:
+        offered |= labels
 
     def fail(reason: str) -> DecisionResult:
         return DecisionResult(

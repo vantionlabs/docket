@@ -49,8 +49,19 @@ class PolicyClause:
     """Set when the clause came from retrieval, so a citation can be stored
     pointing at the row it quoted."""
 
-    def cite_block(self) -> str:
-        return f"[{self.id}] {self.ref}\n{self.text}"
+    def cite_block(self, label: str | None = None) -> str:
+        """How this clause is shown to the model.
+
+        `label` is a short, turn-local handle the model cites instead of the
+        real id. The real id is a chunk UUID: asking a model to copy one of
+        seventeen 36-character hex strings back exactly is asking for
+        mis-attribution, and that is precisely what it produced.
+        """
+        # The id sits alone on its own line, and the human-readable source
+        # is clearly subordinate. Rendering them side by side as
+        # "[clause-1] approved-suppliers.md, 10. Trey Research BV" gave the
+        # model two identifier-shaped things and it cited the wrong one.
+        return f"[{label or self.id}]\nsource: {self.ref}\n{self.text}"
 
 
 class PolicySource(Protocol):
