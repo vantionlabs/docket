@@ -299,3 +299,55 @@ def test_the_render_puts_the_id_on_its_own_line():
     block = CLAUSE.cite_block("clause-1")
     assert block.startswith("[clause-1]\n")
     assert "source: " in block
+
+
+def test_a_heading_inside_a_clause_resolves_to_that_clause():
+    """Chunks span several headings; `ref` names only the first. A model
+    quoting under "6. Proseware Print & Signage BV" is naming a real heading
+    inside a clause it was given, not inventing one."""
+    multi = PolicyClause(
+        id="chunk-x",
+        ref="approved-suppliers.md, 5. Woodgrove Legal BV",
+        text=(
+            "## 5. Woodgrove Legal BV\n\nApproved for legal services.\n\n"
+            "## 6. Proseware Print & Signage BV\n\nApproved for marketing and print."
+        ),
+    )
+    result = check_citations(
+        _decision(
+            citations=[
+                PolicyCitation(
+                    index=1,
+                    clause_id="6. Proseware Print & Signage BV",
+                    excerpt="Approved for marketing and print.",
+                )
+            ]
+        ),
+        [multi],
+        labels={"clause-1": multi},
+    )
+    assert result.grounding_passed
+
+
+def test_a_heading_that_matches_nothing_still_fails():
+    result = check_citations(
+        _decision(
+            citations=[
+                PolicyCitation(index=1, clause_id="99. A Supplier We Never Saw", excerpt="x")
+            ]
+        ),
+        [CLAUSE],
+        labels={"clause-1": CLAUSE},
+    )
+    assert not result.grounding_passed
+
+
+def test_an_ambiguous_heading_is_not_guessed():
+    """Two clauses containing the same heading text is not a resolution."""
+    a = PolicyClause(id="a", ref="doc.md, One", text="## Currency\n\nPayable in euro.")
+    b = PolicyClause(id="b", ref="doc.md, Two", text="## Currency\n\nSomething else.")
+    result = check_citations(
+        _decision(citations=[PolicyCitation(index=1, clause_id="Currency", excerpt="x")]),
+        [a, b],
+    )
+    assert not result.grounding_passed

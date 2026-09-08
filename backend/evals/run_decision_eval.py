@@ -111,10 +111,21 @@ class Result:
     recall: float
     missed: list[str]
     grounded: bool
+    error: str = ""
+    """Set when the case could not be run at all. An eval that dies on one
+    flaky response is an eval nobody finishes, and a 99-case run that
+    aborts at case 40 has spent the money and produced nothing."""
 
     @property
     def false_auto_approve(self) -> bool:
-        """Approved without review something a human did not approve."""
+        """Approved without review something a human did not approve.
+
+        A case that errored is never a false auto-approve: nothing was
+        approved. It is counted separately so an error can never quietly
+        satisfy the gate.
+        """
+        if self.error:
+            return False
         return self.actual == Outcome.auto_approve and self.case.expected != "auto_approve"
 
     @property
@@ -251,19 +262,39 @@ def main() -> int:
     print(f"{'document':34} {'expected':20} {'actual':20} {'recall':>7}  grounded")
     print("-" * 96)
 
+    def _attempt(case: Case) -> Result:
+        """Run one case, or record why it could not be run.
+
+        Printed as it lands rather than collected and printed at the end: a
+        long run that crashes at case 40 should still show you the first 39.
+        """
+        try:
+            result = run_case(case, corpus, obligations)
+        except Exception as exc:  # noqa: BLE001 -- one bad case is not the run
+            result = Result(
+                case=case,
+                actual="error",
+                recall=0.0,
+                missed=[],
+                grounded=False,
+                error=f"{type(exc).__name__}: {exc}"[:120],
+            )
+        flag = " <-- FALSE AUTO-APPROVE" if result.false_auto_approve else ""
+        print(
+            f"{result.case.document:34} {result.case.expected:20} {result.actual:20} "
+            f"{result.recall:7.2f}  {'yes' if result.grounded else 'no ':8}{flag}",
+            flush=True,
+        )
+        if result.error:
+            print(f"{'':34} error: {result.error}", flush=True)
+        for ref in result.missed:
+            print(f"{'':34} missed: {ref}", flush=True)
+        return result
+
     runs: list[list[Result]] = [
-        [run_case(case, corpus, obligations) for case in cases] for _ in range(args.runs)
+        [_attempt(case) for case in cases] for _ in range(args.runs)
     ]
     results = [r for run in runs for r in run]
-
-    for r in runs[0]:
-        flag = " <-- FALSE AUTO-APPROVE" if r.false_auto_approve else ""
-        print(
-            f"{r.case.document:34} {r.case.expected:20} {r.actual:20} "
-            f"{r.recall:7.2f}  {'yes' if r.grounded else 'no ':8}{flag}"
-        )
-        for ref in r.missed:
-            print(f"{'':34} missed: {ref}")
 
     if args.runs > 1:
         print(f"\nstability over {args.runs} runs")
@@ -279,18 +310,30 @@ def main() -> int:
             )
 
     total = len(results)
+    errored = [r for r in results if r.error]
+    scored = [r for r in results if not r.error]
     false_auto = [r for r in results if r.false_auto_approve]
-    false_esc = [r for r in results if r.false_escalation]
-    mean_recall = sum(r.recall for r in results) / total if total else 1.0
-    proposed_auto = any(r.actual == Outcome.auto_approve for r in results)
+    false_esc = [r for r in scored if r.false_escalation]
+    mean_recall = (
+        sum(r.recall for r in scored) / len(scored) if scored else 1.0
+    )
+    proposed_auto = any(r.actual == Outcome.auto_approve for r in scored)
 
     print("\n" + "=" * 96)
     print(f"runs                 {args.runs} x {len(cases)} cases = {total} decisions")
-    print(f"outcome matches      {sum(r.outcome_matches for r in results)}/{total}")
-    print(f"grounded             {sum(r.grounded for r in results)}/{total}")
+    if errored:
+        # Loud, because quality numbers computed over a shrinking
+        # denominator look better the more often the pipeline falls over.
+        print(f"ERRORED              {len(errored)}/{total}   (excluded from the rates below)")
+        from collections import Counter
+
+        for kind, count in Counter(r.error.split(":")[0] for r in errored).most_common():
+            print(f"                     {count:>3} x {kind}")
+    print(f"outcome matches      {sum(r.outcome_matches for r in scored)}/{len(scored)}")
+    print(f"grounded             {sum(r.grounded for r in scored)}/{len(scored)}")
     print(f"mean recall          {mean_recall:.3f}")
-    print(f"false escalations    {len(false_esc)}/{total}   (cost, not a gate)")
-    print(f"FALSE AUTO-APPROVES  {len(false_auto)}/{total}   (gate: must be 0)")
+    print(f"false escalations    {len(false_esc)}/{len(scored)}   (cost, not a gate)")
+    print(f"FALSE AUTO-APPROVES  {len(false_auto)}/{len(scored)}   (gate: must be 0)")
 
     if not proposed_auto:
         # An honest caveat rather than a green tick. The gate is well formed
@@ -303,6 +346,14 @@ def main() -> int:
 
     if false_auto:
         print("\nFAIL: a decision was auto-approved that a human did not approve.")
+        return 1
+    if errored:
+        # Not a quality failure, but not a pass either. A run that could not
+        # execute part of its own set has not measured what it claims to.
+        print(f"\nFAIL: {len(errored)} case(s) could not be run. Fix those first.")
+        return 1
+    if not scored:
+        print("\nFAIL: nothing was scored.")
         return 1
     if mean_recall < args.min_recall:
         print(f"\nFAIL: mean recall {mean_recall:.3f} below --min-recall {args.min_recall}")

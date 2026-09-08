@@ -49,7 +49,14 @@ class ExtractionResult[T: BaseModel]:
 
 @lru_cache
 def _agent(output_type: type) -> Agent:
-    return Agent(chat_model(), output_type=output_type, instructions=_INSTRUCTIONS)
+    return Agent(
+        chat_model(),
+        output_type=output_type, instructions=_INSTRUCTIONS,
+        # One retry is not enough through an extra network hop:
+        # structured output occasionally comes back unparseable and
+        # the whole decision is lost over a transient.
+        retries=3,
+    )
 
 
 def extract[T: BaseModel](

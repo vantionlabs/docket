@@ -31,7 +31,7 @@ from app.config import settings
 from app.decisions.models import Decision, Outcome
 from app.decisions.policy import PolicyClause, PolicySource
 from app.extraction.schemas.invoice import Invoice
-from app.grounding.verbatim import contains_verbatim
+from app.grounding.verbatim import contains_verbatim, normalize
 from app.llm.providers import chat_model, grounding_model
 from app.logging import get_logger
 
@@ -152,7 +152,14 @@ def judge_citations(
 
 @lru_cache
 def _agent() -> Agent[None, Decision]:
-    return Agent(chat_model(), output_type=Decision, instructions=_INSTRUCTIONS)
+    return Agent(
+        chat_model(),
+        output_type=Decision, instructions=_INSTRUCTIONS,
+        # One retry is not enough through an extra network hop:
+        # structured output occasionally comes back unparseable and
+        # the whole decision is lost over a transient.
+        retries=3,
+    )
 
 
 def invoice_query(invoice: Invoice) -> str:
@@ -319,6 +326,27 @@ def check_citations(
     if labels:
         offered |= labels
 
+    def resolve(named: str) -> PolicyClause | None:
+        """Find the clause a citation means.
+
+        Exact match on the label, the id, or the source line first. Failing
+        that, a chunk often spans several headings while its `ref` names only
+        the first, so a model quoting under "6. Proseware Print & Signage BV"
+        is naming a real heading inside a clause it was given. Match that
+        against the clause bodies.
+
+        Still lenient on the handle and strict on the words: whatever
+        resolves, the excerpt must be verbatim in it.
+        """
+        clause = offered.get(named)
+        if clause is not None:
+            return clause
+        needle = normalize(named.split(",")[-1])
+        if not needle:
+            return None
+        hits = [c for c in clauses if needle in normalize(c.text)]
+        return hits[0] if len(hits) == 1 else None
+
     def fail(reason: str) -> DecisionResult:
         return DecisionResult(
             decision=decision, clauses=clauses, grounding_passed=False, grounding_failure=reason
@@ -333,7 +361,7 @@ def check_citations(
 
     validated: list[tuple[int, PolicyClause, str]] = []
     for citation in cited:
-        clause = offered.get(citation.clause_id)
+        clause = resolve(citation.clause_id)
         if clause is None:
             return fail(
                 f"citation [{citation.index}] cites {citation.clause_id!r}, "
