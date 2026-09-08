@@ -48,3 +48,28 @@ def test_prices_are_input_output_pairs():
     for model, price in PRICES.items():
         assert len(price) == 2, model
         assert price[0] >= 0 and price[1] >= 0, model
+
+
+# --- routing through OpenRouter ------------------------------------------
+
+
+def test_an_openrouter_id_prices_as_the_underlying_model():
+    """OpenRouter ids carry a vendor prefix. Without stripping it, every
+    call through OpenRouter would log zero, which is the same silent hole
+    the Claude models were in."""
+    assert cost_usd("anthropic/claude-sonnet-5", 1_000_000, 0) == cost_usd(
+        "claude-sonnet-5", 1_000_000, 0
+    )
+    assert cost_usd("openai/gpt-4o", 1_000_000, 0) == cost_usd("gpt-4o", 1_000_000, 0)
+
+
+def test_a_prefixed_dated_snapshot_still_resolves():
+    assert cost_usd("anthropic/claude-haiku-4-5-20251001", 1_000_000, 0) == cost_usd(
+        "claude-haiku-4-5", 1_000_000, 0
+    )
+
+
+def test_an_unpriced_openrouter_model_is_still_zero_not_a_guess():
+    """A model nobody has priced logs zero and says so, rather than
+    borrowing a number from a model that happens to sound similar."""
+    assert cost_usd("somevendor/some-model", 1_000_000, 0) == 0.0

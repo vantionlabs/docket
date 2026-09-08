@@ -54,7 +54,11 @@ class Settings(BaseSettings):
 
     # --- LLM providers (swap provider by config, not code) ---
     llm_provider: str = "openai"
-    """Provider for the agent + grounding judge: openai | anthropic | azure."""
+    """Provider for every model call: openai | anthropic | azure | openrouter.
+
+    `openrouter` reaches many vendors through one key, with model ids like
+    `anthropic/claude-sonnet-5`. See app/llm/providers.py for what this
+    pipeline needs from a model before you point it at an arbitrary one."""
     chat_model: str = "gpt-4.1"
     """Model / deployment name (no provider prefix — llm_provider sets that)."""
     grounding_model: str = "gpt-4.1-mini"
@@ -62,6 +66,7 @@ class Settings(BaseSettings):
 
     openai_api_key: str = ""
     anthropic_api_key: str = ""
+    openrouter_api_key: str = ""
 
     # Azure OpenAI (used when a provider is set to `azure`).
     azure_openai_endpoint: str = ""
@@ -145,6 +150,9 @@ class Settings(BaseSettings):
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
     langfuse_host: str = "https://cloud.langfuse.com"
+    otel_service_name: str = "docket"
+    """Name this deployment reports itself under in traces, and to
+    OpenRouter as the calling app."""
 
     @property
     def sqlalchemy_database_url(self) -> str:

@@ -45,6 +45,16 @@ PRICES: dict[str, tuple[float, float]] = {
 def cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
     key = model.split(":", 1)[-1]  # strip a "openai:" / "anthropic:" prefix
     if key not in PRICES:
+        # OpenRouter ids carry a vendor prefix: `anthropic/claude-sonnet-5`.
+        # Strip it and price as the underlying model.
+        #
+        # This is an ESTIMATE when routing through OpenRouter, which bills
+        # its own rates with a margin and can vary by route. Their dashboard
+        # is authoritative for what you actually pay; this exists so the
+        # relative cost of operations inside the app stays visible, which is
+        # what the log is for.
+        key = key.rsplit("/", 1)[-1]
+    if key not in PRICES:
         # A dated snapshot like `claude-haiku-4-5-20251001` prices the same
         # as the model it pins. Falling back to the base id beats logging
         # zero and beats a table that needs a row per snapshot date.
