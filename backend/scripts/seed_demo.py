@@ -43,7 +43,7 @@ from app.db.models import (  # noqa: E402
     SourceDocument,
     User,
 )
-from app.ingestion.chunking import chunk_text  # noqa: E402
+from app.ingestion.chunking import chunk_by_heading  # noqa: E402
 from app.ingestion.context import contextualize  # noqa: E402
 from app.llm.embeddings import embed_documents, embeddings_available  # noqa: E402
 from app.workflows.document_decide import DocumentDecideWorkflow  # noqa: E402
@@ -139,7 +139,8 @@ def _policy(db, user, org_id, path: Path) -> SourceDocument:
     db.commit()
 
     document_text = path.read_text(encoding="utf-8")
-    chunks = chunk_text(document_text, target_tokens=180)
+    # Policy documents chunk by heading, as ingestion does.
+    chunks = chunk_by_heading(document_text)
 
     # Embed the way ingestion does: contextualized, as documents. Falls back
     # to zero vectors only when no provider is configured, so seeding still

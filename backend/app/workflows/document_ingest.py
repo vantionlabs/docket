@@ -23,7 +23,7 @@ from app.db.models import (
     PolicyObligation,
     SourceDocument,
 )
-from app.ingestion.chunking import chunk_text
+from app.ingestion.chunking import chunk_by_heading, chunk_text
 from app.ingestion.context import contextualize
 from app.ingestion.parsing import parse_document
 from app.logging import get_logger
@@ -69,10 +69,29 @@ class ParseDocument(Node):
 
 
 class ChunkDocument(Node):
+    """Chunk by structure for policy, by size for everything else.
+
+    A policy already carries the structure that matters, and packing it to a
+    token target throws that away: five supplier entries at thirty tokens
+    each land in one chunk, so a query about one retrieves four others, the
+    chunk's ref names only the first, and the obligations extracted from it
+    are attributed to the wrong clause. Prose has no such structure to
+    preserve, so it keeps the size target.
+    """
+
     def process(self, ctx: TaskContext) -> TaskContext:
-        chunks = chunk_text(ctx.metadata["text"])
+        doc: SourceDocument = ctx.metadata["document"]
+        text = ctx.metadata["text"]
+
+        if doc.collection is Collection.policy:
+            chunks = chunk_by_heading(text)
+            how = "heading"
+        else:
+            chunks = chunk_text(text)
+            how = "size"
+
         ctx.metadata["chunks"] = chunks
-        ctx.nodes[self.name] = {"chunks": len(chunks)}
+        ctx.nodes[self.name] = {"chunks": len(chunks), "strategy": how}
         return ctx
 
 

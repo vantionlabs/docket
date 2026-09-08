@@ -1,16 +1,34 @@
-"""Token-aware chunking: paragraph-preserving, fixed target with overlap.
+"""Chunking, in two shapes for two kinds of document.
 
-Splits on blank lines (paragraphs), packs paragraphs into chunks of about
-`chunk_target_tokens`, and starts each next chunk with the tail of the
-previous one (overlap) so answers spanning a boundary stay retrievable.
-Oversized single paragraphs are hard-split on token windows.
+`chunk_text` is token-aware: split on blank lines, pack paragraphs to about
+`chunk_target_tokens`, and start each next chunk with the tail of the
+previous one so answers spanning a boundary stay retrievable. Right for
+prose, where a size target is the only structure available.
+
+`chunk_by_heading` splits on headings instead, one chunk per section. Right
+for a policy, where the document already carries the structure that matters
+and packing to a size target throws it away. Five supplier entries at thirty
+tokens each land in one 180-token chunk, and then: a query about one
+supplier retrieves a chunk that is eighty percent other suppliers, the
+chunk's `ref` names only its first heading so a citation of the fifth cannot
+be resolved, and the obligations extracted from it are attributed to the
+wrong clause.
+
+Small chunks embed poorly on their own, which is the usual argument against
+this. Contextual retrieval answers it: the text that gets embedded carries
+the document name and heading path (app/ingestion/context.py), so a
+fifteen-token clause is embedded with the context that makes it findable.
+Without that, do not split this finely.
 """
 
+import re
 from dataclasses import dataclass
 
 import tiktoken
 
 from app.config import settings
+
+_HEADING = re.compile(r"^#{1,6}\s+\S")
 
 _enc = tiktoken.get_encoding("cl100k_base")
 
@@ -122,3 +140,73 @@ def chunk_text(
 
     flush()
     return chunks
+
+
+def chunk_by_heading(
+    text: str,
+    max_tokens: int | None = None,
+) -> list[Chunk]:
+    """One chunk per heading section, in document order.
+
+    A section that runs past `max_tokens` is packed with `chunk_text`, so an
+    unusually long clause degrades to size-based chunking rather than
+    producing one enormous chunk. Text before the first heading becomes its
+    own chunk: a document's preamble is often its scope statement, which is
+    exactly the kind of rule that must stay retrievable.
+    """
+    limit = max_tokens or settings.chunk_target_tokens
+    sections = _sections(text)
+    chunks: list[Chunk] = []
+
+    for content, offset in sections:
+        if _tokens(content) <= limit:
+            chunks.append(
+                Chunk(
+                    index=len(chunks),
+                    content=content,
+                    token_count=_tokens(content),
+                    source_start=offset,
+                )
+            )
+            continue
+
+        # Too long to keep whole. Fall back to size-based chunking within
+        # this section, keeping every piece anchored to the section start so
+        # the heading path still resolves.
+        for piece in chunk_text(content, target_tokens=limit):
+            chunks.append(
+                Chunk(
+                    index=len(chunks),
+                    content=piece.content,
+                    token_count=piece.token_count,
+                    source_start=offset + max(piece.source_start, 0),
+                )
+            )
+
+    return chunks
+
+
+def _sections(text: str) -> list[tuple[str, int]]:
+    """Split at headings. Returns (section text, offset in the source)."""
+    lines = text.splitlines(keepends=True)
+    starts: list[int] = []
+    cursor = 0
+    for line in lines:
+        if _HEADING.match(line.strip()):
+            starts.append(cursor)
+        cursor += len(line)
+
+    if not starts:
+        stripped = text.strip()
+        return [(stripped, text.index(stripped))] if stripped else []
+
+    # Anything before the first heading is its own section.
+    bounds = ([0] if starts[0] > 0 else []) + starts
+    sections: list[tuple[str, int]] = []
+    for i, start in enumerate(bounds):
+        end = bounds[i + 1] if i + 1 < len(bounds) else len(text)
+        raw = text[start:end]
+        stripped = raw.strip()
+        if stripped:
+            sections.append((stripped, start + raw.index(stripped)))
+    return sections
