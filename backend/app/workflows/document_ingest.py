@@ -93,7 +93,12 @@ class EmbedChunks(Node):
         document_text = ctx.metadata["text"]
 
         embed_texts = [
-            contextualize(chunk.content, doc.filename, document_text=document_text)
+            contextualize(
+                chunk.content,
+                doc.filename,
+                document_text=document_text,
+                source_start=chunk.source_start,
+            )
             for chunk in chunks
         ]
         # Documents, not queries: the provider embeds the two differently.

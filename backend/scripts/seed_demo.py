@@ -148,7 +148,12 @@ def _policy(db, user, org_id, path: Path) -> SourceDocument:
     if available:
         vectors = embed_documents(
             [
-                contextualize(chunk.content, path.name, document_text=document_text)
+                contextualize(
+                    chunk.content,
+                    path.name,
+                    document_text=document_text,
+                    source_start=chunk.source_start,
+                )
                 for chunk in chunks
             ]
         )
