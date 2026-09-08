@@ -259,10 +259,17 @@ class CoveredPolicy:
     it is a real reason to stop and ask a person.
     """
 
-    def __init__(self, inner: PolicySource, obligations: list, triggered: set) -> None:
+    def __init__(
+        self,
+        inner: PolicySource,
+        obligations: list,
+        triggered: set,
+        terms: set[str] | None = None,
+    ) -> None:
         self.inner = inner
         self.obligations = obligations
         self.triggered = triggered
+        self.terms = terms
         self.report = None
 
     def retrieve(self, query: str, top_k: int = 8) -> list[PolicyClause]:
@@ -271,7 +278,7 @@ class CoveredPolicy:
         clauses = list(self.inner.retrieve(query, top_k=top_k))
         found = {clause.id for clause in clauses}
 
-        report = check_coverage(self.obligations, self.triggered, found)
+        report = check_coverage(self.obligations, self.triggered, found, self.terms)
         gaps_before = list(report.missed)
 
         if gaps_before:
@@ -281,7 +288,10 @@ class CoveredPolicy:
             # holding only what could NOT be repaired. Anything else would
             # escalate cases the system just fixed.
             report = check_coverage(
-                self.obligations, self.triggered, found | {c.id for c in repaired}
+                self.obligations,
+                self.triggered,
+                found | {c.id for c in repaired},
+                self.terms,
             )
             log.info(
                 "coverage.repaired",

@@ -39,7 +39,7 @@ def _invoice(currency="EUR", issued="2026-02-12", due=None):
     )
 
 
-def _obligation(dimension, clause_id=None, chunk_id=None, always=False):
+def _obligation(dimension, clause_id=None, chunk_id=None, always=False, about=()):
     """`clause_id` is what a markdown corpus calls the clause; `chunk_id` is
     what the database calls it. An obligation carries whichever its policy
     source uses, and `clause_key` picks."""
@@ -50,6 +50,7 @@ def _obligation(dimension, clause_id=None, chunk_id=None, always=False):
         clause_ref=f"clause for {dimension}",
         chunk_id=chunk_id,
         always_applies=always,
+        applies_when=tuple(about),
     )
 
 
@@ -272,3 +273,111 @@ def test_an_unknown_dimension_is_skipped_not_assumed_covered():
     db.scalars.return_value.all.return_value = [row]
 
     assert load_obligations(db, uuid.uuid4(), "invoice") == []
+
+
+# --- applicability: what a rule is ABOUT, not just what kind it is ------
+
+
+def test_a_category_rule_does_not_bear_on_another_category():
+    """The bug: "Catering and hospitality commitments up to EUR 50,000 may be
+    approved by a department head" is a real, in-force, invoice-governing
+    `amount` rule with nothing to say about a cleaning invoice. Every invoice
+    triggers `amount`, so all fifteen category ladders were required and
+    eight of them were repaired into the evidence every time."""
+    catering = _obligation(Dimension.amount, about=("catering", "hospitality"))
+    cleaning_invoice = {"office", "cleaning", "monthly", "consumables"}
+
+    assert not catering.bears_on({Dimension.amount}, cleaning_invoice)
+
+
+def test_a_category_rule_bears_on_its_own_category():
+    catering = _obligation(Dimension.amount, about=("catering", "hospitality"))
+    assert catering.bears_on({Dimension.amount}, {"adventure", "works", "catering"})
+
+
+def test_an_unconditional_rule_bears_on_everything():
+    """Most rules are like this: a EUR 500 PO threshold is about any purchase."""
+    general = _obligation(Dimension.purchase_order)
+    assert general.bears_on({Dimension.purchase_order}, {"anything", "at", "all"})
+
+
+def test_an_unknown_subject_keeps_every_conditional_rule():
+    """Skipping a rule that did matter is the failure this module exists to
+    prevent, so not knowing the subject errs toward requiring more."""
+    catering = _obligation(Dimension.amount, about=("catering",))
+    assert catering.bears_on({Dimension.amount}, None)
+
+
+def test_the_dimension_gate_still_applies_first():
+    """A currency rule about catering is still not required by an invoice
+    that does not put currency in play."""
+    rule = _obligation(Dimension.currency, about=("catering",))
+    assert not rule.bears_on({Dimension.amount}, {"catering"})
+
+
+def test_coverage_skips_rules_that_do_not_bear_on_the_document():
+    report = check_coverage(
+        [
+            _obligation(Dimension.amount, "general"),
+            _obligation(Dimension.amount, "telecoms", about=("telecoms",)),
+        ],
+        {Dimension.amount},
+        set(),
+        terms={"contoso", "cleaning"},
+    )
+    assert [o.id for o in report.triggered] == ["general"]
+
+
+def test_subject_terms_reads_supplier_cost_centre_and_lines():
+    from decimal import Decimal
+
+    from app.decisions.coverage import subject_terms
+    from app.extraction.schemas.invoice import LineItem
+
+    invoice = _invoice()
+    invoice.cost_centre = _f("FAC-01")
+    invoice.line_items = [
+        LineItem(
+            description=_f("Catering, per head"),
+            quantity=_f(Decimal(10)),
+            unit_price=_f(Decimal("28.50")),
+            amount=_f(Decimal("285.00")),
+        )
+    ]
+    terms = subject_terms(invoice)
+    assert {"catering", "head", "fac", "01"} <= terms
+
+
+def test_subject_terms_survives_a_sparse_invoice():
+    """An extraction that read almost nothing must not blow up the check."""
+    from app.decisions.coverage import subject_terms
+
+    assert subject_terms(object()) == set()
+
+
+def test_the_supplier_name_is_not_a_subject_term():
+    """"Contoso Cleaning Services BV" contributed the token `services`,
+    which matched the delegation matrix's "Legal Services" ladder and pulled
+    it into the evidence for a cleaning invoice. A trading name says who
+    sold, not what was bought."""
+    from decimal import Decimal
+
+    from app.decisions.coverage import subject_terms
+    from app.extraction.schemas.invoice import LineItem
+
+    invoice = _invoice()  # supplier: Contoso Cleaning Services BV
+    invoice.line_items = [
+        LineItem(
+            description=_f("Office cleaning, monthly"),
+            quantity=_f(Decimal(1)),
+            unit_price=_f(Decimal("620.00")),
+            amount=_f(Decimal("620.00")),
+        )
+    ]
+    terms = subject_terms(invoice)
+    assert "services" not in terms
+    assert "contoso" not in terms
+    assert {"office", "cleaning", "monthly"} <= terms
+
+    legal = _obligation(Dimension.amount, about=("legal", "services"))
+    assert not legal.bears_on({Dimension.amount}, terms)

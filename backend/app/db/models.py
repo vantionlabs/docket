@@ -569,6 +569,15 @@ class PolicyObligation(Base):
     """False for a superseded version retained for audit. The 2024 policy
     with the old thresholds is exactly the clause you least want pulled into
     a decision about a 2026 invoice."""
+    applies_when: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)
+    """Subject terms the document must mention for this rule to bear on it.
+    Empty means it bears on every document of this kind.
+
+    "Catering and hospitality commitments up to EUR 50,000 may be approved
+    by a department head" is a real, in-force, invoice-governing `amount`
+    rule that has nothing to say about a cleaning invoice. Without this it
+    was required for every invoice, and the repair step pulled it into the
+    evidence every time."""
     summary: Mapped[str] = mapped_column(Text)
     clause_ref: Mapped[str] = mapped_column(Text)
     always_applies: Mapped[bool] = mapped_column(Boolean, default=False)

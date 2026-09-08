@@ -28,7 +28,11 @@ from app.db.models import (
     Extraction,
     SourceDocument,
 )
-from app.decisions.coverage import load_obligations, triggered_dimensions
+from app.decisions.coverage import (
+    load_obligations,
+    subject_terms,
+    triggered_dimensions,
+)
 from app.decisions.decide import decide_invoice
 from app.decisions.models import Outcome
 from app.decisions.policy import CoveredPolicy, RetrievedPolicy
@@ -136,6 +140,7 @@ class DecideAgainstPolicy(Node):
             RetrievedPolicy(doc.user_id),
             obligations=load_obligations(ctx.db, doc.org_id, SCHEMA_NAME),
             triggered=triggered,
+            terms=subject_terms(invoice),
         )
 
         result = decide_invoice(

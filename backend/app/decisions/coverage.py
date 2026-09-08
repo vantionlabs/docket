@@ -84,8 +84,36 @@ class Obligation:
     always_applies: bool = False
     """True for obligations with no trigger condition: scope, escalation,
     and anything that governs every document of this kind."""
+    applies_when: tuple[str, ...] = ()
+    """Subject terms the document must mention for this rule to bear on it.
+    Empty means unconditional.
+
+    `dimension` says what KIND of rule this is; this says what it is ABOUT.
+    Both are needed: a catering spend limit and a telecoms spend limit are
+    both `amount` rules, and neither has anything to say about the other's
+    invoices."""
     threshold: Decimal | None = None
     """Present for amount obligations, so a band can be evaluated in code."""
+
+    def bears_on(
+        self, triggered: set["Dimension"], subject_terms: set[str] | None = None
+    ) -> bool:
+        """Does this rule have anything to say about this document?
+
+        Two gates. The dimension has to be in play, and the subject has to
+        match when the rule names one.
+
+        `subject_terms=None` means the caller does not know what the document
+        is about, and every conditional rule is then treated as applicable.
+        That is the conservative direction: requiring a rule that turns out
+        not to matter costs a clause in the prompt, and skipping one that did
+        matter is the failure this whole module exists to prevent.
+        """
+        if not (self.always_applies or self.dimension in triggered):
+            return False
+        if not self.applies_when or subject_terms is None:
+            return True
+        return any(term in subject_terms for term in self.applies_when)
 
     @property
     def clause_key(self) -> str:
@@ -178,15 +206,48 @@ def _payment_days(invoice) -> int | None:
         return None
 
 
+def subject_terms(invoice) -> set[str]:
+    """The words this document is about, for matching `applies_when`.
+
+    Line items and cost centre: what was actually bought. Lowercased single
+    words, because a rule written about "catering and hospitality" should
+    match a line reading "Catering, per head" without either side having to
+    guess the other's phrasing.
+
+    **The supplier name is deliberately excluded.** It says who sold, not
+    what was bought, and trading names are full of words that collide with
+    spend categories: "Contoso Cleaning Services BV" contributed the token
+    `services`, which matched the delegation matrix's "Legal Services"
+    ladder and pulled it into the evidence for a cleaning invoice. Suppliers
+    are what the `supplier` dimension is for.
+    """
+    terms: set[str] = set()
+
+    def add(text: str | None) -> None:
+        if text:
+            terms.update(_WORD.findall(str(text).lower()))
+
+    add(getattr(getattr(invoice, "cost_centre", None), "value", None))
+    for item in getattr(invoice, "line_items", None) or []:
+        add(getattr(getattr(item, "description", None), "value", None))
+    return terms
+
+
 def check_coverage(
     obligations: list[Obligation],
     triggered: set[Dimension],
     retrieved_clause_ids: set[str],
+    terms: set[str] | None = None,
 ) -> CoverageReport:
-    """Compare what applied against what retrieval actually returned."""
+    """Compare what applied against what retrieval actually returned.
+
+    `terms` is what the document is about. Omitting it means every
+    conditional rule is treated as applicable, which is the old behaviour
+    and is only right when there is nothing to match against.
+    """
     report = CoverageReport()
     for obligation in obligations:
-        if not (obligation.always_applies or obligation.dimension in triggered):
+        if not obligation.bears_on(triggered, terms):
             continue
         report.triggered.append(obligation)
         found = obligation.clause_key in retrieved_clause_ids
@@ -236,6 +297,14 @@ Set always_applies to true only when the obligation must be considered for
 EVERY document, regardless of its contents: scope and escalation rules
 usually qualify, a EUR 500 threshold does not.
 
+Set applies_when to the subject words this rule is ABOUT, when it is about
+one. A clause headed "Catering and hospitality" limiting catering spend
+gets ["catering", "hospitality"]; a general spend threshold that applies to
+any purchase gets an empty list. Use lowercase single words, not phrases.
+Getting this wrong in the generous direction is cheap; a rule marked as
+being about a subject it is not will be skipped for documents it should
+have governed.
+
 For an amount obligation, set threshold to the figure it turns on, if it has
 one. Summarise each obligation in one plain line a reviewer could act on.
 Quote nothing; the clause itself is already stored.
@@ -281,6 +350,10 @@ def extract_obligations(
             default=True, description="False when the document says it is superseded"
         )
         always_applies: bool = False
+        applies_when: list[str] = Field(
+            default_factory=list,
+            description="Lowercase subject words this rule is about; empty if general",
+        )
         threshold: Decimal | None = None
 
     class _Obligations(BaseModel):
@@ -302,6 +375,7 @@ def extract_obligations(
     return [o.model_dump(mode="json") for o in result.output.obligations]
 
 
+_WORD = re.compile(r"[a-z0-9]+")
 _REF = re.compile(r"^(#{1,6})\s+(.*)$")
 
 
@@ -350,6 +424,7 @@ def load_obligations(
                 chunk_id=row.chunk_id,
                 document_id=row.document_id,
                 always_applies=row.always_applies,
+                applies_when=tuple(row.applies_when or ()),
                 threshold=Decimal(str(row.threshold)) if row.threshold is not None else None,
             )
         )
