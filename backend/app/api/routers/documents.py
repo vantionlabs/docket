@@ -9,14 +9,15 @@ Upload flow:
 
 import uuid
 
-from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.schemas import (
     NOT_FOUND,
     UNAUTHORIZED,
     DocumentOut,
+    DocumentPage,
     PresignRequest,
     PresignResponse,
 )
@@ -24,7 +25,7 @@ from app.auth.access import require_document_access
 from app.auth.dependencies import CurrentUser, get_current_user
 from app.core.document_intake import receive_document
 from app.db.engine import get_db
-from app.db.models import DocumentStatus, SourceDocument
+from app.db.models import Collection, DocumentStatus, SourceDocument
 from app.storage.r2 import delete_object, object_key, presign_put
 
 router = APIRouter(prefix="/documents", tags=["documents"], responses=UNAUTHORIZED)
@@ -95,20 +96,45 @@ def confirm_upload(
 
 @router.get(
     "",
-    response_model=list[DocumentOut],
+    response_model=DocumentPage,
     summary="List your documents",
-    description="Newest first, with ingestion `status`. Poll this while a document is processing.",
+    description=(
+        "Newest first, with ingestion `status`. Paginated, and filterable by "
+        "`collection` (`policy` for the rules, `transactional` for the "
+        "documents judged against them) and by filename with `q`."
+    ),
 )
 def list_documents(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> list[SourceDocument]:
-    return list(
+    collection: Collection | None = Query(default=None),
+    q: str | None = Query(default=None, description="Filename contains, case-insensitive."),
+    limit: int = Query(default=50, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> DocumentPage:
+    filters = [SourceDocument.user_id == user.id]
+    if collection is not None:
+        filters.append(SourceDocument.collection == collection)
+    if q:
+        filters.append(SourceDocument.filename.ilike(f"%{q}%"))
+
+    total = db.scalar(
+        select(func.count()).select_from(SourceDocument).where(*filters)
+    ) or 0
+    items = list(
         db.scalars(
             select(SourceDocument)
-            .where(SourceDocument.user_id == user.id)
+            .where(*filters)
             .order_by(SourceDocument.created_at.desc())
+            .limit(limit)
+            .offset(offset)
         )
+    )
+    return DocumentPage(
+        items=[DocumentOut.model_validate(i, from_attributes=True) for i in items],
+        total=total,
+        limit=limit,
+        offset=offset,
     )
 
 

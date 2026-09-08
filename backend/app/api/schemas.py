@@ -61,6 +61,21 @@ class PresignResponse(BaseModel):
     upload_url: str = Field(description="Presigned PUT URL, short-lived.")
 
 
+class DocumentPage(BaseModel):
+    """A page of documents, plus how many there are in total.
+
+    The list endpoint used to return every row. At 5,000 documents that is
+    a megabyte on the wire and a browser asked to lay out 5,000 nodes, which
+    is the kind of thing that works fine on the fixtures and falls over on a
+    real corpus.
+    """
+
+    items: list["DocumentOut"]
+    total: int = Field(description="Matching documents, ignoring limit/offset.")
+    limit: int
+    offset: int
+
+
 class DocumentOut(BaseModel):
     id: uuid.UUID
     collection: Collection
