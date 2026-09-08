@@ -51,13 +51,21 @@ Pick exactly one outcome:
   or the document is missing something you would need. Choose this whenever
   you are unsure. Choosing it is always allowed and is never a failure.
 
-Every claim in your rationale that rests on policy carries a [n] marker and
-a matching citation. Each citation names the clause id EXACTLY as it appears
-in brackets below (they look like `clause-3`) and quotes a short excerpt from
-THAT clause, copied character for character. Quoting text from one clause and
-naming another is the most common way this goes wrong: check that the words
+Work in this order.
+
+FIRST choose your citations. Pick only the clauses that actually decide this
+case, at most six, and number them from 1. Each names the clause id EXACTLY
+as it appears in brackets below (they look like `clause-3`) and quotes a
+short excerpt from THAT clause, copied character for character. Quoting text
+from one clause and naming another is a common mistake: check that the words
 you quote appear under the id you named. You may only cite clauses given to
-you below. If no clause supports a point, do not make it.
+you below.
+
+THEN write the rationale, in a few sentences, using [n] markers that refer to
+the citations you just listed. Every marker must have a citation behind it.
+Do not introduce a new number mid-sentence. A rationale with fourteen markers
+is a rationale that has lost track of itself: say less, and cite what decides
+it. If no clause supports a point, do not make the point.
 
 Mark only claims about what policy requires. Do not attach a marker to a fact
 about the document itself: "the invoice carries PO-2026-0088" is something you

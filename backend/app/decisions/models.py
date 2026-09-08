@@ -36,13 +36,34 @@ class PolicyCitation(BaseModel):
 
 
 class Decision(BaseModel):
-    """The model's proposal. The rails decide what happens to it."""
+    """The model's proposal. The rails decide what happens to it.
+
+    **Field order matters here.** Structured output is generated in
+    declaration order, so `citations` is declared before `rationale`: the
+    model chooses and numbers its clauses first, then writes prose that
+    refers to numbers it has already committed to.
+
+    The other way round, which this used to be, asks it to write `[7]` in
+    the middle of a paragraph and only afterwards work out what citation 7
+    is. Across a long rationale it loses track, and a marker with no entry
+    behind it is an unverifiable claim that fails grounding. That single
+    ordering accounted for 25 of 66 grounding failures on a 99-case run.
+    """
 
     outcome: Outcome
-    rationale: str = Field(
-        description="Why, in a few sentences, with [n] markers referencing the citations"
+    citations: list[PolicyCitation] = Field(
+        default_factory=list,
+        description=(
+            "The clauses that decide this case, numbered from 1. Choose these "
+            "BEFORE writing the rationale, and keep the list short."
+        ),
     )
-    citations: list[PolicyCitation] = Field(default_factory=list)
+    rationale: str = Field(
+        description=(
+            "Why, in a few sentences, using [n] markers that refer to the "
+            "citations above. Never write a marker with no citation behind it."
+        )
+    )
     assignee_hint: str | None = Field(
         default=None,
         description="A cost centre or role that should approve. Never a named person.",
