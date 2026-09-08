@@ -18,6 +18,7 @@ from app.db.engine import engine
 from app.logging import configure_logging
 from app.observability.request_id import RequestIdMiddleware
 from app.observability.sentry import init_sentry
+from app.observability.tracing import configure_tracing
 
 API_DESCRIPTION = """
 Backend for the AI-project starter: document upload, an event-driven
@@ -47,6 +48,7 @@ TAGS_METADATA = [
 async def lifespan(app: FastAPI):
     configure_logging()
     init_sentry()
+    configure_tracing()
     yield
 
 

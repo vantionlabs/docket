@@ -29,3 +29,11 @@ celery_app.conf.beat_schedule = {
     },
 }
 
+
+
+# The worker runs extraction, the decision and both grounding stages, which
+# is where the traces worth reading come from. The API process configures
+# this separately; they are different processes.
+from app.observability.tracing import configure_tracing  # noqa: E402
+
+configure_tracing()

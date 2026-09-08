@@ -178,3 +178,51 @@ def test_every_scenario_names_dimensions_the_checker_knows(scenario):
 
     for name in scenario.dimensions:
         assert name in {d.value for d in Dimension}, f"{scenario.key}: {name}"
+
+
+# --- the train / holdout split -------------------------------------------
+
+
+def _load(name: str) -> list[dict]:
+    import json
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "evals" / name
+    if not path.exists():
+        pytest.skip(f"{name} not generated yet")
+    return [
+        json.loads(line)
+        for line in path.read_text().splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+
+
+def test_the_two_halves_do_not_overlap():
+    """The whole value of a holdout is that tuning never saw it."""
+    train = {c["document"] for c in _load("decisions-train.jsonl")}
+    holdout = {c["document"] for c in _load("decisions-holdout.jsonl")}
+    assert train and holdout
+    assert not (train & holdout), "a case appears in both halves"
+
+
+def test_the_split_covers_the_whole_set():
+    train = {c["document"] for c in _load("decisions-train.jsonl")}
+    holdout = {c["document"] for c in _load("decisions-holdout.jsonl")}
+    everything = {c["document"] for c in _load("decisions-generated.jsonl")}
+    assert train | holdout == everything
+
+
+def test_both_halves_carry_the_same_mix():
+    """Stratified, not random. A random split lands all the rare nasties on
+    one side often enough to matter, and then the holdout is measuring a
+    different problem from the one that was tuned."""
+    from collections import Counter
+
+    train = Counter(c["expected"] for c in _load("decisions-train.jsonl"))
+    holdout = Counter(c["expected"] for c in _load("decisions-holdout.jsonl"))
+    assert set(train) == set(holdout), "an outcome appears in only one half"
+
+    for outcome in train:
+        train_share = train[outcome] / sum(train.values())
+        holdout_share = holdout[outcome] / sum(holdout.values())
+        assert abs(train_share - holdout_share) < 0.10, outcome
