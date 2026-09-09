@@ -194,7 +194,7 @@ def replay(
             result,
             extracted,
             list(extraction.unverified_fields or []),
-            list(extraction.arithmetic_failures or []),
+            list(extraction.check_failures or []),
             rule=rule,
         )
 
@@ -320,7 +320,7 @@ def sweep(
                 result,
                 extracted,
                 list(extraction.unverified_fields or []),
-                list(extraction.arithmetic_failures or []),
+                list(extraction.check_failures or []),
                 rule=rule,
             )
             now_automatic = final.outcome is Outcome.auto_approve

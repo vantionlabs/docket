@@ -40,6 +40,15 @@ class AutoApproveRule:
     max_total_incl_vat: Decimal
     approved_suppliers: frozenset[str] = frozenset()
     require_po: bool = True
+    min_payment_days: int = 0
+    """Reject automatic approval when the invoice is due sooner than this.
+
+    An unusually short payment window is a pressure tactic and the policy
+    treats it as one, but nothing in code read it: `evals/check_rule.py`
+    showed short-terms invoices reaching auto_approve at every limit, held
+    back only by the model noticing. Zero disables the condition, which is
+    the default because a rule that silently imposes a term nobody wrote is
+    worse than one that does not check."""
     active: bool = False
 
     def unmet(self, invoice: Invoice) -> list[str]:
@@ -56,6 +65,13 @@ class AutoApproveRule:
             failures.append(f"supplier {invoice.supplier.value!r} is not on the approved list")
         if self.require_po and invoice.po_number is None:
             failures.append("no purchase order number on the invoice")
+        if self.min_payment_days and invoice.due_on is not None:
+            days = (invoice.due_on.value - invoice.issued_on.value).days
+            if days < self.min_payment_days:
+                failures.append(
+                    f"payment terms of {days} days are shorter than the "
+                    f"{self.min_payment_days} the {self.name} rule requires"
+                )
         return failures
 
 
@@ -221,6 +237,7 @@ def from_row(row: "RuleRow") -> AutoApproveRule:
         max_total_incl_vat=Decimal(str(conditions.get("max_total_incl_vat", "0"))),
         approved_suppliers=frozenset(conditions.get("approved_suppliers") or ()),
         require_po=bool(conditions.get("require_po", True)),
+        min_payment_days=int(conditions.get("min_payment_days") or 0),
         active=bool(row.active and row.auto_approve),
     )
 

@@ -454,8 +454,8 @@ def test_detail_assembles_without_duplicating_a_field(monkeypatch):
         schema_name="invoice",
         document_text="Fabrikam Office Supplies BV\nTotal including VAT: EUR 12196.80",
         unverified_fields=[],
-        arithmetic_ok=True,
-        arithmetic_failures=[],
+        checks_ok=True,
+        check_failures=[],
         fields={
             "supplier": {"value": "Fabrikam Office Supplies BV", "source_span": "Fabrikam"},
             "total_incl_vat": {"value": "12196.80", "source_span": "12196.80"},
@@ -480,8 +480,8 @@ def test_detail_orders_fields_by_the_schema_not_by_storage(monkeypatch):
         schema_name="invoice",
         document_text="",
         unverified_fields=[],
-        arithmetic_ok=True,
-        arithmetic_failures=[],
+        checks_ok=True,
+        check_failures=[],
         # Deliberately scrambled, the way JSONB hands it back.
         fields={
             "due_on": {"value": "2026-04-02", "source_span": "2 April 2026"},
@@ -510,8 +510,8 @@ def test_unknown_schema_still_renders(monkeypatch):
         schema_name="contract_renewal_v0",
         document_text="",
         unverified_fields=[],
-        arithmetic_ok=True,
-        arithmetic_failures=[],
+        checks_ok=True,
+        check_failures=[],
         fields={"counterparty": {"value": "Acme", "source_span": "Acme"}},
     )
     client = _detail_client(monkeypatch, decision, extraction)

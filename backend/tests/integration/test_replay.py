@@ -102,7 +102,7 @@ def _decide(
     outcome: Outcome,
     proposed: Outcome | None = None,
     unverified: list[str] | None = None,
-    arithmetic_failures: list[str] | None = None,
+    check_failures: list[str] | None = None,
     grounding_passed: bool = True,
     coverage_complete: bool | None = True,
 ) -> Decision:
@@ -128,8 +128,8 @@ def _decide(
         document_text="(parsed invoice)",
         fields=json.loads(invoice.model_dump_json()),
         unverified_fields=unverified or [],
-        arithmetic_ok=not arithmetic_failures,
-        arithmetic_failures=arithmetic_failures or [],
+        checks_ok=not check_failures,
+        check_failures=check_failures or [],
         model="test",
     )
     db.add(extraction)
@@ -228,7 +228,7 @@ def test_a_wider_limit_still_cannot_loosen_the_other_rails(db, user, org):
     _decide(db, user, org, _invoice("400.00"), Outcome.needs_human,
             proposed=Outcome.auto_approve, coverage_complete=False)
     _decide(db, user, org, _invoice("400.00"), Outcome.route_for_approval,
-            proposed=Outcome.auto_approve, arithmetic_failures=["VAT does not add up"])
+            proposed=Outcome.auto_approve, check_failures=["VAT does not add up"])
 
     report = replay(db, org, rule_from_conditions("generous", {"max_total_incl_vat": "999999"}))
 

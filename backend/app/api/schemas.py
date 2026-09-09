@@ -181,8 +181,8 @@ class DecisionDetailOut(DecisionOut):
         ),
     )
     unverified_fields: list[str] = Field(default_factory=list)
-    arithmetic_ok: bool = True
-    arithmetic_failures: list[str] = Field(default_factory=list)
+    checks_ok: bool = True
+    check_failures: list[str] = Field(default_factory=list)
     fields: list[ExtractedFieldOut] = Field(default_factory=list)
 
 
@@ -225,6 +225,14 @@ class RuleConditions(BaseModel):
         description="Exact supplier names. Empty means the rule does not check suppliers.",
     )
     require_po: bool = Field(default=True, description="Require a purchase order number.")
+    min_payment_days: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Refuse automatic approval when the invoice is due sooner than this "
+            "many days after it was issued. Zero does not check."
+        ),
+    )
 
 
 class RuleIn(BaseModel):

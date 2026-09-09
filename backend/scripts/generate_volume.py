@@ -165,8 +165,8 @@ def main() -> int:
                     # detail screen and any future analysis all have to skip.
                     fields=invoice.as_extraction_fields(),
                     unverified_fields=[],
-                    arithmetic_ok="arithmetic" not in invoice.scenario.key,
-                    arithmetic_failures=[],
+                    checks_ok="arithmetic" not in invoice.scenario.key,
+                    check_failures=[],
                     model=FIXTURE_MODEL,
                     created_at=created,
                 )

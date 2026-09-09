@@ -186,8 +186,8 @@ def get_decision(
         **summary.model_dump(),
         document_text=extraction.document_text if extraction else "",
         unverified_fields=sorted(unverified),
-        arithmetic_ok=extraction.arithmetic_ok if extraction else True,
-        arithmetic_failures=list(extraction.arithmetic_failures) if extraction else [],
+        checks_ok=extraction.checks_ok if extraction else True,
+        check_failures=list(extraction.check_failures) if extraction else [],
         fields=_flatten_fields(
             extraction.fields if extraction else {},
             unverified,

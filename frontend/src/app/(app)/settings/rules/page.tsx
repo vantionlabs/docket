@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Plus, Trash2 } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +19,7 @@ type Rule = {
     max_total_incl_vat?: string;
     approved_suppliers?: string[];
     require_po?: boolean;
+    min_payment_days?: number;
   };
   auto_approve: boolean;
   active: boolean;
@@ -29,6 +31,7 @@ const EMPTY = {
   max_total_incl_vat: "1000",
   approved_suppliers: "",
   require_po: true,
+  min_payment_days: "14",
   auto_approve: false,
 };
 
@@ -82,6 +85,7 @@ export default function RulesPage() {
             .map((s) => s.trim())
             .filter(Boolean),
           require_po: draft.require_po,
+          min_payment_days: Number(draft.min_payment_days || 0),
         },
       });
     } catch (e) {
@@ -96,6 +100,14 @@ export default function RulesPage() {
         A rule decides whether an outcome the pipeline proposed can execute
         without a person seeing it. Nothing auto-approves unless a rule here
         says so and every one of its conditions holds.
+      </p>
+      <p className="text-muted-foreground mt-2 text-sm">
+        Before arming one,{" "}
+        <Link href="/settings/replay" className="underline underline-offset-2">
+          replay it against the decisions already made
+        </Link>
+        . It says exactly which of them the rule would have stopped showing a
+        person, by name and amount.
       </p>
 
       <ul className="mt-8 divide-y border-y">
@@ -131,6 +143,9 @@ export default function RulesPage() {
                 {rule.conditions.approved_suppliers?.length
                   ? `${rule.conditions.approved_suppliers.length} approved supplier(s)`
                   : "any supplier"}
+                {rule.conditions.min_payment_days
+                  ? ` · at least ${rule.conditions.min_payment_days} days to pay`
+                  : " · any payment terms"}
               </p>
             </div>
             <Button
@@ -172,6 +187,21 @@ export default function RulesPage() {
             />
             <p className="text-muted-foreground text-xs">
               Inclusive. Leave at 0 and the rule approves nothing.
+            </p>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="terms">Minimum days to pay</Label>
+            <Input
+              id="terms"
+              inputMode="numeric"
+              value={draft.min_payment_days}
+              onChange={(e) =>
+                setDraft({ ...draft, min_payment_days: e.target.value })
+              }
+            />
+            <p className="text-muted-foreground text-xs">
+              An unusually short window is a pressure tactic. Zero does not
+              check, and then only the model notices.
             </p>
           </div>
         </div>

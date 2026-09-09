@@ -89,7 +89,13 @@ class ExtractFields(Node):
         # raises here rather than being decided against the wrong policy.
         vertical = get_vertical(doc.vertical)
         result = extract(ctx.metadata["text"], vertical.schema, user_id=doc.user_id)
-        arithmetic = vertical.check(result.data)
+        checks = vertical.check(result.data)
+
+        # The checks a document can fail on its own, plus the one it can only
+        # fail against everything already seen. Both feed the same rail.
+        for failure in _seen_before(ctx.db, doc, result.data):
+            checks.ok = False
+            checks.failures.append(failure)
 
         row = Extraction(
             org_id=doc.org_id,
@@ -98,8 +104,8 @@ class ExtractFields(Node):
             document_text=ctx.metadata["text"],
             fields=json.loads(result.data.model_dump_json()),
             unverified_fields=result.unverified_fields,
-            arithmetic_ok=arithmetic.ok,
-            arithmetic_failures=arithmetic.failures,
+            checks_ok=checks.ok,
+            check_failures=checks.failures,
             model=result.model,
         )
         ctx.db.add(row)
@@ -108,14 +114,70 @@ class ExtractFields(Node):
         ctx.metadata["extracted"] = result.data
         ctx.metadata["extraction"] = row
         ctx.metadata["unverified"] = result.unverified_fields
-        ctx.metadata["arithmetic_failures"] = arithmetic.failures
-        ctx.metadata["checks"] = arithmetic
+        ctx.metadata["check_failures"] = checks.failures
+        ctx.metadata["checks"] = checks
         ctx.nodes[self.name] = {
             "extraction_id": str(row.id),
             "unverified_fields": result.unverified_fields,
-            "arithmetic_ok": arithmetic.ok,
+            "checks_ok": checks.ok,
+            "check_failures": checks.failures,
         }
         return ctx
+
+
+def _seen_before(db, doc: SourceDocument, document) -> list[str]:
+    """Has this org already extracted an invoice with this number, from this
+    supplier, out of a different file?
+
+    A duplicate is the cheapest expensive mistake in accounts payable, and
+    `evals/check_rule.py` found it was the one deliberate nasty that reached
+    auto_approve at every threshold with nothing but the model's memory
+    stopping it. A model asked whether it has seen an invoice number before
+    is being asked to do a database's job from a context window.
+
+    Matching is on (supplier, invoice number) rather than on the file,
+    because a duplicate that arrives as a re-scan or a re-send is the same
+    duplicate. A re-run over the *same* document is not one, which is why
+    the document id is excluded rather than the extraction id: re-deciding a
+    document must not accuse it of duplicating itself.
+
+    Returns a list so the caller can extend `check_failures` without caring
+    whether anything was found, and so a second stateful check can be added
+    beside it later.
+    """
+    from sqlalchemy import select
+
+    number = getattr(document, "invoice_number", None)
+    supplier = getattr(document, "supplier", None)
+    if number is None or supplier is None:
+        return []
+
+    earlier = db.scalars(
+        select(Extraction)
+        .join(SourceDocument, Extraction.document_id == SourceDocument.id)
+        .where(
+            Extraction.org_id == doc.org_id,
+            Extraction.schema_name == doc.vertical,
+            Extraction.document_id != doc.id,
+            Extraction.fields["invoice_number"]["value"].astext == str(number.value),
+            Extraction.fields["supplier"]["value"].astext == str(supplier.value),
+        )
+        .order_by(Extraction.created_at.asc())
+        .limit(1)
+    ).first()
+
+    if earlier is None:
+        return []
+    log.warning(
+        "decision.duplicate_invoice",
+        document_id=str(doc.id),
+        invoice_number=str(number.value),
+        first_seen=str(earlier.document_id),
+    )
+    return [
+        f"invoice {number.value} from {supplier.value} was already extracted "
+        f"from another document on {earlier.created_at:%Y-%m-%d}"
+    ]
 
 
 class DecideAgainstPolicy(Node):
@@ -185,7 +247,7 @@ class ApplyRails(Node):
             result,
             ctx.metadata["extracted"],
             ctx.metadata["unverified"],
-            ctx.metadata["arithmetic_failures"],
+            ctx.metadata["check_failures"],
             rule=rule,
         )
 

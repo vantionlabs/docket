@@ -380,8 +380,13 @@ class Extraction(Base):
     """
     fields: Mapped[dict] = mapped_column(JSONB, default=dict)
     unverified_fields: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)
-    arithmetic_ok: Mapped[bool] = mapped_column(Boolean, default=True)
-    arithmetic_failures: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)
+    checks_ok: Mapped[bool] = mapped_column(Boolean, default=True)
+    check_failures: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)
+    """What was decided without a model, and what it found. Arithmetic and a
+    legal VAT rate on an invoice, chronology on a tender, and — because a
+    query answers it better than a judgement does — whether this invoice
+    number has been seen before. Feeds the rail that says a document failing
+    them is never an automatic approval."""
     model: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
