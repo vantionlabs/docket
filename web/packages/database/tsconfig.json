@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "include": [],
+  "files": [],
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["${configDir}/src/*"],
+      "@forge/domain/*": ["../domain/src/*.js"]
+    }
+  },
+  "references": [{ "path": "tsconfig.src.json" }, { "path": "tsconfig.test.json" }]
+}

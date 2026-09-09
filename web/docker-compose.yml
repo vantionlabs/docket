@@ -1,0 +1,31 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: forge-postgres
+    environment:
+      POSTGRES_DB: forge
+      POSTGRES_USER: forge
+      POSTGRES_PASSWORD: forge
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U forge -d forge"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # RULES.md leans on OTEL spans rather than manual logging, so the collector is
+  # part of the default local stack. UI on http://localhost:16686.
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: forge-jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"
+      - "4318:4318"
+
+volumes:
+  pgdata:

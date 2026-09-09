@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "include": ["vite.config.ts"],
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "noEmit": true,
+    "types": ["node"],
+    "tsBuildInfoFile": ".tsbuildinfo/node.tsbuildinfo"
+  }
+}

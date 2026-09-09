@@ -1,0 +1,258 @@
+import { Field, FormBuilder } from "@lucas-barake/effect-form"
+import * as Cause from "effect/Cause"
+import * as Effect from "effect/Effect"
+import * as Exit from "effect/Exit"
+import * as Option from "effect/Option"
+import * as Schema from "effect/Schema"
+import * as SchemaIssue from "effect/SchemaIssue"
+import { describe, expect, it } from "vitest"
+
+describe("Form", () => {
+  describe("FormBuilder", () => {
+    it("empty creates an empty FormBuilder", () => {
+      expect(FormBuilder.isFormBuilder(FormBuilder.empty)).toBe(true)
+      expect(FormBuilder.empty.fields).toEqual({})
+    })
+
+    it("addField adds a field to the builder", () => {
+      const EmailField = Field.makeField("email", Schema.String)
+      const builder = FormBuilder.empty.addField(EmailField)
+
+      expect(FormBuilder.isFormBuilder(builder)).toBe(true)
+      expect(builder.fields).toHaveProperty("email")
+      expect(builder.fields.email._tag).toBe("field")
+    })
+
+    it("addField accepts inline key and schema", () => {
+      const builder = FormBuilder.empty
+        .addField("email", Schema.String)
+        .addField("age", Schema.Number)
+
+      expect(FormBuilder.isFormBuilder(builder)).toBe(true)
+      expect(builder.fields).toHaveProperty("email")
+      expect(builder.fields).toHaveProperty("age")
+      expect(builder.fields.email._tag).toBe("field")
+      expect(builder.fields.age._tag).toBe("field")
+    })
+
+    it("addField inline syntax builds correct schema", () => {
+      const builder = FormBuilder.empty
+        .addField("name", Schema.String)
+        .addField("age", Schema.Number)
+
+      const schema = FormBuilder.buildSchema(builder)
+      const result = Schema.decodeUnknownSync(schema)({ name: "John", age: 30 })
+
+      expect(result).toEqual({ name: "John", age: 30 })
+    })
+
+    it("addArray adds an array field", () => {
+      const NameField = Field.makeField("name", Schema.String)
+      const AddressesField = Field.makeArrayField(
+        "addresses",
+        Schema.Struct({
+          street: Schema.String,
+          city: Schema.String
+        })
+      )
+      const builder = FormBuilder.empty
+        .addField(NameField)
+        .addField(AddressesField)
+
+      expect(builder.fields.addresses._tag).toBe("array")
+      expect(Field.isArrayFieldDef(builder.fields.addresses)).toBe(true)
+    })
+
+    it("merge combines two form builders", () => {
+      const StreetField = Field.makeField("street", Schema.String)
+      const CityField = Field.makeField("city", Schema.String)
+      const addressFields = FormBuilder.empty
+        .addField(StreetField)
+        .addField(CityField)
+
+      const NameField = Field.makeField("name", Schema.String)
+      const builder = FormBuilder.empty
+        .addField(NameField)
+        .merge(addressFields)
+
+      expect(Object.keys(builder.fields)).toEqual(["name", "street", "city"])
+    })
+
+    it("merge preserves refinements from both builders", () => {
+      const builderA = FormBuilder.empty
+        .addField("a", Schema.String)
+        .refine((values) => {
+          if (values.a !== "a") {
+            return { path: ["a"], issue: "A invalid" }
+          }
+        })
+
+      const builderB = FormBuilder.empty
+        .addField("b", Schema.String)
+        .refine((values) => {
+          if (values.b !== "b") {
+            return { path: ["b"], issue: "B invalid" }
+          }
+        })
+
+      const schema = FormBuilder.buildSchema(builderA.merge(builderB))
+      const formatter = SchemaIssue.makeFormatterStandardSchemaV1()
+
+      const exitA = Schema.decodeUnknownExit(schema)({ a: "x", b: "b" })
+      if (Exit.isSuccess(exitA)) throw new Error("Expected failure")
+      const schemaErrorA = Option.getOrThrow(Cause.findErrorOption(exitA.cause))
+      const messagesA = formatter(schemaErrorA.issue).issues.map((issue) => issue.message)
+      expect(messagesA).toContain("A invalid")
+
+      const exitB = Schema.decodeUnknownExit(schema)({ a: "a", b: "x" })
+      if (Exit.isSuccess(exitB)) throw new Error("Expected failure")
+      const schemaErrorB = Option.getOrThrow(Cause.findErrorOption(exitB.cause))
+      const messagesB = formatter(schemaErrorB.issue).issues.map((issue) => issue.message)
+      expect(messagesB).toContain("B invalid")
+    })
+
+    it("merge prefers fields from the second builder on key collision", () => {
+      const first = FormBuilder.empty.addField("value", Schema.String)
+      const second = FormBuilder.empty.addField("value", Schema.Number)
+
+      const schema = FormBuilder.buildSchema(first.merge(second))
+
+      expect(Schema.decodeUnknownSync(schema)({ value: 123 })).toEqual({ value: 123 })
+      expect(() => Schema.decodeUnknownSync(schema)({ value: "text" })).toThrow()
+    })
+  })
+
+  describe("buildSchema", () => {
+    it("builds a Schema from simple fields", () => {
+      const EmailField = Field.makeField("email", Schema.String)
+      const AgeField = Field.makeField("age", Schema.Number)
+
+      const builder = FormBuilder.empty
+        .addField(EmailField)
+        .addField(AgeField)
+
+      const schema = FormBuilder.buildSchema(builder)
+      const result = Schema.decodeUnknownSync(schema)({ email: "test@example.com", age: 25 })
+
+      expect(result).toEqual({ email: "test@example.com", age: 25 })
+    })
+
+    it("builds a Schema with array fields", () => {
+      const TitleField = Field.makeField("title", Schema.String)
+      const ItemsField = Field.makeArrayField("items", Schema.Struct({ name: Schema.String }))
+
+      const builder = FormBuilder.empty
+        .addField(TitleField)
+        .addField(ItemsField)
+
+      const schema = FormBuilder.buildSchema(builder)
+      const result = Schema.decodeUnknownSync(schema)({
+        title: "My List",
+        items: [{ name: "Item 1" }, { name: "Item 2" }]
+      })
+
+      expect(result).toEqual({
+        title: "My List",
+        items: [{ name: "Item 1" }, { name: "Item 2" }]
+      })
+    })
+
+    it("validates with schema constraints", () => {
+      const Email = Schema.String.pipe(Schema.check(Schema.isPattern(/@/)))
+      const EmailField = Field.makeField("email", Email)
+
+      const builder = FormBuilder.empty.addField(EmailField)
+
+      const schema = FormBuilder.buildSchema(builder)
+
+      expect(() => Schema.decodeUnknownSync(schema)({ email: "invalid" })).toThrow()
+      expect(Schema.decodeUnknownSync(schema)({ email: "valid@example.com" })).toEqual({
+        email: "valid@example.com"
+      })
+    })
+
+    it("applies refinements in buildSchema", () => {
+      const PasswordField = Field.makeField("password", Schema.String)
+      const ConfirmPasswordField = Field.makeField("confirmPassword", Schema.String)
+
+      const builder = FormBuilder.empty
+        .addField(PasswordField)
+        .addField(ConfirmPasswordField)
+        .refine((values) => {
+          if (values.password !== values.confirmPassword) {
+            return { path: ["confirmPassword"], issue: "Passwords must match" }
+          }
+        })
+
+      const schema = FormBuilder.buildSchema(builder)
+
+      expect(() => Schema.decodeUnknownSync(schema)({ password: "secret", confirmPassword: "different" })).toThrow()
+
+      expect(
+        Schema.decodeUnknownSync(schema)({ password: "secret", confirmPassword: "secret" })
+      ).toEqual({ password: "secret", confirmPassword: "secret" })
+    })
+
+    it("applies async refinements with refineEffect", async () => {
+      const UsernameField = Field.makeField("username", Schema.String)
+
+      const builder = FormBuilder.empty
+        .addField(UsernameField)
+        .refineEffect((values) =>
+          Effect.gen(function*() {
+            yield* Effect.sleep("1 millis")
+            if (values.username === "taken") {
+              return { path: ["username"], issue: "Username is already taken" }
+            }
+          })
+        )
+
+      const schema = FormBuilder.buildSchema(builder)
+
+      await expect(
+        Effect.runPromise(
+          Schema.decodeUnknownEffect(schema)({ username: "taken" }) as Effect.Effect<any, Schema.SchemaError>
+        )
+      ).rejects.toThrow()
+
+      const result = await Effect.runPromise(
+        Schema.decodeUnknownEffect(schema)({ username: "available" }) as Effect.Effect<any, Schema.SchemaError>
+      )
+      expect(result).toEqual({ username: "available" })
+    })
+
+    it("applies multiple chained refinements", () => {
+      const AField = Field.makeField("a", Schema.String)
+      const BField = Field.makeField("b", Schema.String)
+
+      const builder = FormBuilder.empty
+        .addField(AField)
+        .addField(BField)
+        .refine((values) => {
+          if (values.a === "error") {
+            return { path: ["a"], issue: "First refinement failed" }
+          }
+        })
+        .refine((values) => {
+          if (values.b === "error") {
+            return { path: ["b"], issue: "Second refinement failed" }
+          }
+        })
+
+      const schema = FormBuilder.buildSchema(builder)
+
+      expect(() => Schema.decodeUnknownSync(schema)({ a: "error", b: "ok" })).toThrow(/First refinement failed/)
+
+      expect(() => Schema.decodeUnknownSync(schema)({ a: "ok", b: "error" })).toThrow(/Second refinement failed/)
+
+      expect(Schema.decodeUnknownSync(schema)({ a: "ok", b: "ok" })).toEqual({ a: "ok", b: "ok" })
+    })
+  })
+
+  describe("type guards", () => {
+    it("isFormBuilder correctly identifies FormBuilder", () => {
+      expect(FormBuilder.isFormBuilder(FormBuilder.empty)).toBe(true)
+      expect(FormBuilder.isFormBuilder({})).toBe(false)
+    })
+  })
+})

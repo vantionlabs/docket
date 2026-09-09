@@ -1,0 +1,20 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "include": ["src", "test"],
+  "references": [{ "path": "../../packages/domain" }],
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "jsx": "react-jsx",
+    "types": ["node", "vite/client"],
+    "tsBuildInfoFile": ".tsbuildinfo/app.tsbuildinfo",
+    "paths": {
+      "@/*": ["${configDir}/src/*"],
+      "@test/*": ["${configDir}/test/*"],
+      "@forge/domain/*": ["../../packages/domain/src/*.js"]
+    }
+  }
+}

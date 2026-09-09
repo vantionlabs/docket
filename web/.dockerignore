@@ -1,0 +1,24 @@
+# Shared by both images. The build context is the repository root for either
+# one, because pnpm needs the whole workspace to resolve a single package.
+#
+# `repos/` matters most: two vendored monorepos are the bulk of this checkout
+# and no image needs a byte of them.
+repos/
+node_modules/
+**/node_modules/
+**/build/
+**/dist/
+**/.output/
+**/.tanstack/
+**/.tsbuildinfo/
+**/*.tsbuildinfo
+coverage/
+.git/
+.github/
+.claude/
+.direnv/
+.env
+.env.local
+knowledge/
+*.md
+!AGENTS.md

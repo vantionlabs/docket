@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts"],
+  "references": [{ "path": "../../packages/domain" }, { "path": "../../packages/database" }],
+  "compilerOptions": {
+    "types": ["node"],
+    "outDir": "build/src",
+    "tsBuildInfoFile": ".tsbuildinfo/src.tsbuildinfo",
+    "rootDir": "src",
+    "paths": {
+      "@/*": ["${configDir}/src/*"],
+      "#src/*": ["${configDir}/src/*"],
+      "@forge/database/*": ["../../packages/database/src/*.js"],
+      "@forge/domain/*": ["../../packages/domain/src/*.js"]
+    }
+  }
+}

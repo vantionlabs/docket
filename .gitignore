@@ -52,3 +52,6 @@ celerybeat-schedule
 
 # generated OpenAPI export (run backend/scripts/export_openapi.py)
 backend/openapi.json
+
+# direnv config, not a secret — the forge boilerplate in web/ ships one
+!.envrc

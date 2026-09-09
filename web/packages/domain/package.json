@@ -1,0 +1,27 @@
+{
+  "name": "@forge/domain",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "ISC",
+  "exports": {
+    "./package.json": "./package.json",
+    "./*": {
+      "development": "./src/*.ts",
+      "types": "./src/*.ts",
+      "default": "./build/src/*.js"
+    }
+  },
+  "scripts": {
+    "check": "tsc -b tsconfig.json",
+    "test": "vitest run",
+    "build": "tsc -b tsconfig.json"
+  },
+  "dependencies": {
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "vitest": "catalog:"
+  }
+}

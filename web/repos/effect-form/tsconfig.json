@@ -1,0 +1,11 @@
+{
+  "$schema": "http://json.schemastore.org/tsconfig",
+  "extends": "./tsconfig.base.json",
+  "include": [],
+  "references": [
+    { "path": "tsconfig.packages.json" },
+    { "path": "packages/form/tsconfig.test.json" },
+    { "path": "packages/form-react/tsconfig.test.json" },
+    { "path": "packages/form-solid/tsconfig.test.json" }
+  ]
+}

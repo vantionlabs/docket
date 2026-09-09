@@ -1,0 +1,60 @@
+{
+  "name": "@forge/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "ISC",
+  "exports": {
+    "./package.json": "./package.json",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "tsc -b tsconfig.json",
+    "test": "vitest run",
+    "start": "node .output/server/index.mjs"
+  },
+  "dependencies": {
+    "@base-ui/react": "catalog:",
+    "@effect/atom-react": "catalog:",
+    "@effect/platform-browser": "catalog:",
+    "@forge/domain": "workspace:*",
+    "@lucas-barake/effect-form": "catalog:",
+    "@lucas-barake/effect-form-react": "catalog:",
+    "@tanstack/react-router": "catalog:",
+    "@tanstack/react-start": "catalog:",
+    "better-auth": "catalog:",
+    "class-variance-authority": "catalog:",
+    "clsx": "catalog:",
+    "cmdk": "catalog:",
+    "effect": "catalog:",
+    "lucide-react": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "sonner": "catalog:",
+    "tailwind-merge": "catalog:"
+  },
+  "peerDependencies": {
+    "react": "catalog:",
+    "scheduler": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@tailwindcss/vite": "catalog:",
+    "@tanstack/router-plugin": "catalog:",
+    "@testing-library/jest-dom": "catalog:",
+    "@testing-library/react": "catalog:",
+    "@testing-library/user-event": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "jsdom": "catalog:",
+    "nitro": "catalog:",
+    "scheduler": "catalog:",
+    "tailwindcss": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:"
+  }
+}

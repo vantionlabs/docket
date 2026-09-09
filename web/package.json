@@ -1,0 +1,47 @@
+{
+  "$schema": "./node_modules/@effect/tsgo/schema.json",
+  "name": "forge",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "ISC",
+  "packageManager": "pnpm@10.12.4",
+  "engines": {
+    "node": ">=22.14.0",
+    "pnpm": ">=10.12.4"
+  },
+  "scripts": {
+    "prepare": "effect-tsgo patch --oxlint",
+    "dev": "pnpm --parallel --filter @forge/server --filter @forge/web dev",
+    "build": "pnpm --filter @forge/domain --filter @forge/database --filter @forge/server --filter @forge/web build",
+    "check": "tsc -b tsconfig.json && tsc -p tsconfig.tools.json",
+    "check:watch": "tsc -b tsconfig.json --watch",
+    "format": "dprint fmt",
+    "format:check": "dprint check",
+    "lint": "oxlint --disable-nested-config",
+    "lint:fix": "oxlint --disable-nested-config --fix",
+    "test": "vitest run",
+    "coverage": "vitest run --coverage",
+    "clean": "rm -rf apps/*/build apps/*/.tsbuildinfo packages/*/build packages/*/.tsbuildinfo apps/web/dist apps/web/.output apps/web/.tanstack coverage",
+    "sync:skills": "node scripts/sync-effect-skills.mjs"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "0.36.5",
+    "@effect/vitest": "catalog:",
+    "@forge/scripts": "workspace:*",
+    "@types/node": "catalog:",
+    "@vitest/coverage-v8": "^4.1.10",
+    "dprint": "^0.55.2",
+    "effect": "catalog:",
+    "oxlint": "1.78.0",
+    "oxlint-tsgolint": "7.0.2001",
+    "railway": "catalog:",
+    "typescript": "^7.0.2",
+    "vitest": "catalog:"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "dprint"
+    ]
+  }
+}

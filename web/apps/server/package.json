@@ -1,0 +1,51 @@
+{
+  "name": "@forge/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "ISC",
+  "exports": {
+    "./package.json": "./package.json",
+    "./*": "./src/*.ts"
+  },
+  "imports": {
+    "#src/*": {
+      "development": "./src/*",
+      "default": "./build/src/*"
+    }
+  },
+  "scripts": {
+    "dev": "tsx watch --conditions=development --env-file-if-exists=../../.env src/Main.ts",
+    "build": "tsc -b tsconfig.json && vite build",
+    "start": "node build/bundle/main.js",
+    "check": "tsc -b tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@effect/opentelemetry": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "@effect/sql-pg": "catalog:",
+    "@forge/database": "workspace:*",
+    "@forge/domain": "workspace:*",
+    "@opentelemetry/api": "catalog:",
+    "@opentelemetry/exporter-trace-otlp-http": "catalog:",
+    "@opentelemetry/resources": "catalog:",
+    "@opentelemetry/sdk-trace-base": "catalog:",
+    "@opentelemetry/sdk-trace-node": "catalog:",
+    "@opentelemetry/semantic-conventions": "catalog:",
+    "better-auth": "catalog:",
+    "effect": "catalog:",
+    "pg": "catalog:",
+    "resend": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@testcontainers/postgresql": "catalog:",
+    "@types/node": "catalog:",
+    "@types/pg": "catalog:",
+    "tsx": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:",
+    "zod": "catalog:"
+  }
+}

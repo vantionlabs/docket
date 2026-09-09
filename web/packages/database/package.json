@@ -1,0 +1,35 @@
+{
+  "name": "@forge/database",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "ISC",
+  "exports": {
+    "./package.json": "./package.json",
+    "./*": {
+      "development": "./src/*.ts",
+      "types": "./src/*.ts",
+      "default": "./build/src/*.js"
+    }
+  },
+  "scripts": {
+    "check": "tsc -b tsconfig.json",
+    "build": "tsc -b tsconfig.json && vite build && cp -R src/migrations build/bundle/migrations",
+    "migrate": "tsx --conditions=development --env-file-if-exists=../../.env src/bin/migrate.ts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@effect/sql-pg": "catalog:",
+    "@forge/domain": "workspace:*",
+    "effect": "catalog:",
+    "pg": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "@types/pg": "catalog:",
+    "tsx": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:"
+  }
+}

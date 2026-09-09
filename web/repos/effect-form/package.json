@@ -1,0 +1,60 @@
+{
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.18.1+sha512.77a884a165cbba2d8d1c19e3b4880eee6d2fcabd0d879121e282196b80042351d5eb3ca0935fa599da1dc51265cc68816ad2bddd2a2de5ea9fdf92adbec7cd34",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "clean": "node scripts/clean.mjs",
+    "build": "tsc -b tsconfig.packages.json && pnpm -r run build",
+    "build:tsgo": "tsgo -b tsconfig.packages.json && pnpm -r run build:tsgo",
+    "circular": "madge --extensions ts --circular --no-color --no-spinner packages/*/src",
+    "check:types": "tsc -b tsconfig.json",
+    "check:tsgo": "tsgo -b tsconfig.json",
+    "check:all": "pnpm check:tsgo && pnpm lint && pnpm test",
+    "lint": "oxlint --fix && dprint fmt",
+    "prepare": "simple-git-hooks",
+    "test": "vitest",
+    "coverage": "vitest --coverage",
+    "changeset-version": "changeset version",
+    "changeset-publish": "pnpm build && changeset publish"
+  },
+  "simple-git-hooks": {
+    "pre-commit": "pnpm lint"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "dprint",
+      "simple-git-hooks"
+    ]
+  },
+  "devDependencies": {
+    "@babel/cli": "^7.28.6",
+    "@babel/core": "^7.29.0",
+    "@changesets/changelog-github": "^0.5.2",
+    "@changesets/cli": "^2.31.0",
+    "@effect/atom-react": "4.0.0-beta.52",
+    "@effect/language-service": "^0.85.1",
+    "@effect/vitest": "4.0.0-beta.52",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/jsdom": "^28.0.1",
+    "@types/node": "^25.6.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@typescript/native-preview": "7.0.0-dev.20260420.1",
+    "@vitest/coverage-v8": "^4.1.4",
+    "babel-plugin-annotate-pure-calls": "^0.5.0",
+    "dprint": "^0.54.0",
+    "effect": "4.0.0-beta.52",
+    "glob": "^13.0.6",
+    "jsdom": "^29.0.2",
+    "madge": "^8.0.0",
+    "oxlint": "1.42.0",
+    "simple-git-hooks": "^2.13.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.4"
+  }
+}

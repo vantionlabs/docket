@@ -1,0 +1,39 @@
+name: ci
+
+on:
+  # Every branch, not just main: a boilerplate is forked and worked on in
+  # branches long before anything merges, and CI that only runs on main is CI
+  # that tells you after the fact.
+  push:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      # Runs the `prepare` script, which patches TypeScript and oxlint with the
+      # Effect language service.
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm format:check
+
+      - run: pnpm check
+
+      - run: pnpm lint
+
+      # Docker is available on ubuntu-latest, so the testcontainers-backed
+      # Postgres started by test/global-setup.ts runs here rather than skipping.
+      - run: pnpm test
