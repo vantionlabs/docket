@@ -18,13 +18,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.decisions.decide import decide_invoice  # noqa: E402
+from app.decisions.decide import decide  # noqa: E402
 from app.decisions.policy import PolicyCorpus  # noqa: E402
 from app.decisions.rails import AutoApproveRule, apply_rails  # noqa: E402
-from app.extraction.arithmetic import check_invoice  # noqa: E402
 from app.extraction.extract import extract  # noqa: E402
 from app.extraction.schemas.invoice import Invoice  # noqa: E402
 from app.ingestion.parsing import parse_document  # noqa: E402
+from app.verticals import get_vertical  # noqa: E402
 
 DEFAULT_POLICY = Path(__file__).resolve().parents[1] / "evals/fixtures/procurement-policy.md"
 
@@ -82,15 +82,17 @@ def run(path: Path, corpus: PolicyCorpus, rule: AutoApproveRule) -> bool:
     for name in unverified:
         print(f"  unverified: {name}")
 
-    arithmetic = check_invoice(invoice)
+    vertical = get_vertical("invoice")
+    arithmetic = vertical.check(invoice)
     print(f"ARITHMETIC        {'ok' if arithmetic.ok else 'FAILED'}")
     for failure in arithmetic.failures:
         print(f"  {failure}")
 
-    result = decide_invoice(
+    result = decide(
         invoice,
         corpus,
-        arithmetic_failures=arithmetic.failures,
+        vertical=vertical,
+        checks=arithmetic,
         unverified_fields=unverified,
     )
     final = apply_rails(result, invoice, unverified, arithmetic.failures, rule=rule)

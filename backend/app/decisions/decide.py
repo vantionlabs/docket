@@ -30,10 +30,10 @@ from pydantic_ai import Agent
 from app.config import settings
 from app.decisions.models import Decision, Outcome
 from app.decisions.policy import PolicyClause, PolicySource
-from app.extraction.schemas.invoice import Invoice
 from app.grounding.verbatim import contains_verbatim, normalize
 from app.llm.providers import chat_model, grounding_model
 from app.logging import get_logger
+from app.verticals.base import DeterministicChecks, Vertical
 
 log = get_logger(__name__)
 
@@ -170,77 +170,11 @@ def _agent() -> Agent[None, Decision]:
     )
 
 
-def invoice_query(invoice: Invoice) -> str:
-    """The policy question this invoice asks, in the corpus's own words.
-
-    The query names the *dimensions* policy cares about, not only the values
-    on the invoice. The M1 spike found out why: a USD invoice whose query
-    said "amount 8400 USD" never retrieved the currency clause, because the
-    clause says "euro" and "another currency" and the invoice says neither.
-    A missed clause is an unasked question, and an unasked question looks
-    exactly like a satisfied one.
-    """
-    parts = [
-        f"supplier {invoice.supplier.value}",
-        f"amount {invoice.total_incl_vat.value} {invoice.currency.value}",
-        "purchase order" if invoice.po_number else "no purchase order number supplied",
-    ]
-    if invoice.cost_centre is not None:
-        parts.append(f"cost centre {invoice.cost_centre.value}")
-    if invoice.line_items:
-        parts.extend(item.description.value for item in invoice.line_items[:5])
-
-    if invoice.currency.value.strip().upper() != "EUR":
-        parts.append("invoice presented in another currency, not payable in euro")
-    if invoice.due_on is not None:
-        days = (invoice.due_on.value - invoice.issued_on.value).days
-        if days < 14:
-            parts.append(f"shortened payment terms, payment demanded in {days} days")
-
-    # The standing dimensions: every invoice asks these of the policy, whether
-    # or not its own text happens to use the policy's words.
-    parts.append(
-        "spend threshold approval authority, approved supplier list, purchase order "
-        "requirement, payment terms, currency, VAT rate, duplicate invoice"
-    )
-    return ", ".join(parts)
-
-
-def _render(invoice: Invoice, arithmetic_failures: list[str], unverified: list[str]) -> str:
-    lines = [
-        "INVOICE (extracted):",
-        f"  supplier: {invoice.supplier.value}",
-        f"  invoice number: {invoice.invoice_number.value}",
-        f"  issued: {invoice.issued_on.value}",
-        f"  currency: {invoice.currency.value}",
-        f"  total incl VAT: {invoice.total_incl_vat.value}",
-        f"  VAT: {invoice.vat_amount.value}",
-        f"  subtotal excl VAT: {invoice.subtotal_excl_vat}",
-        f"  PO number: {invoice.po_number.value if invoice.po_number else 'none'}",
-        f"  cost centre: {invoice.cost_centre.value if invoice.cost_centre else 'none'}",
-    ]
-    if invoice.line_items:
-        lines.append("  line items:")
-        lines.extend(
-            f"    - {item.description.value}: {item.quantity.value} x "
-            f"{item.unit_price.value} = {item.amount.value}"
-            for item in invoice.line_items
-        )
-    if unverified:
-        lines.append(
-            "  WARNING, these fields could not be verified against the document "
-            f"and may be wrong: {', '.join(unverified)}"
-        )
-    if arithmetic_failures:
-        lines.append("  WARNING, the arithmetic does not check out:")
-        lines.extend(f"    - {failure}" for failure in arithmetic_failures)
-    return "\n".join(lines)
-
-
-def decide_invoice(
-    invoice: Invoice,
+def decide(
+    document,
     corpus: PolicySource,
-    arithmetic_failures: list[str] | None = None,
+    vertical: Vertical,
+    checks: DeterministicChecks | None = None,
     unverified_fields: list[str] | None = None,
     user_id: uuid.UUID | None = None,
     top_k: int = 8,
@@ -248,13 +182,20 @@ def decide_invoice(
 ) -> DecisionResult:
     """Retrieve the relevant policy, ask for a decision, check the citations.
 
+    Knows nothing about what kind of document this is. The vertical supplies
+    the query and the rendering; everything below — retrieval, labelling,
+    the structural check, the judge — is the same for an invoice and a
+    tender, which is the whole claim of spec section 3.
+
     `judge=False` skips the second grounding stage. It exists for the spike
     and for tests, not as a production setting: skipping it means a
     correctly quoted but irrelevant clause passes.
     """
+    if checks is None:
+        checks = DeterministicChecks()
     from app.observability.usage import record_run_usage
 
-    clauses = corpus.retrieve(invoice_query(invoice), top_k=top_k)
+    clauses = corpus.retrieve(vertical.query(document), top_k=top_k)
     if not clauses:
         return DecisionResult(
             decision=Decision(
@@ -275,7 +216,7 @@ def decide_invoice(
 
     prompt = "\n\n".join(
         [
-            _render(invoice, arithmetic_failures or [], unverified_fields or []),
+            vertical.render(document, checks, unverified_fields or []),
             "POLICY CLAUSES:",
             "\n\n".join(
                 clause.cite_block(label) for label, clause in labels.items()

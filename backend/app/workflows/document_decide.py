@@ -28,21 +28,16 @@ from app.db.models import (
     Extraction,
     SourceDocument,
 )
-from app.decisions.coverage import (
-    load_obligations,
-    subject_terms,
-    triggered_dimensions,
-)
-from app.decisions.decide import decide_invoice
+from app.decisions.coverage import load_obligations
+from app.decisions.decide import decide
 from app.decisions.models import Outcome
 from app.decisions.policy import CoveredPolicy, RetrievedPolicy
 from app.decisions.rails import apply_rails, rule_for
-from app.extraction.arithmetic import check_invoice
 from app.extraction.extract import extract
-from app.extraction.schemas.invoice import SCHEMA_NAME, Invoice
 from app.ingestion.parsing import parse_document
 from app.logging import get_logger
 from app.storage.r2 import download_bytes
+from app.verticals import get_vertical
 
 log = get_logger(__name__)
 
@@ -90,13 +85,16 @@ class ExtractFields(Node):
 
     def process(self, ctx: TaskContext) -> TaskContext:
         doc: SourceDocument = ctx.metadata["document"]
-        result = extract(ctx.metadata["text"], Invoice, user_id=doc.user_id)
-        arithmetic = check_invoice(result.data)
+        # The workflow asks the document what it is. An unknown vertical
+        # raises here rather than being decided against the wrong policy.
+        vertical = get_vertical(doc.vertical)
+        result = extract(ctx.metadata["text"], vertical.schema, user_id=doc.user_id)
+        arithmetic = vertical.check(result.data)
 
         row = Extraction(
             org_id=doc.org_id,
             document_id=doc.id,
-            schema_name=SCHEMA_NAME,
+            schema_name=doc.vertical,
             document_text=ctx.metadata["text"],
             fields=json.loads(result.data.model_dump_json()),
             unverified_fields=result.unverified_fields,
@@ -107,10 +105,11 @@ class ExtractFields(Node):
         ctx.db.add(row)
         ctx.db.commit()
 
-        ctx.metadata["invoice"] = result.data
+        ctx.metadata["extracted"] = result.data
         ctx.metadata["extraction"] = row
         ctx.metadata["unverified"] = result.unverified_fields
         ctx.metadata["arithmetic_failures"] = arithmetic.failures
+        ctx.metadata["checks"] = arithmetic
         ctx.nodes[self.name] = {
             "extraction_id": str(row.id),
             "unverified_fields": result.unverified_fields,
@@ -122,31 +121,33 @@ class ExtractFields(Node):
 class DecideAgainstPolicy(Node):
     """Retrieve policy, decide, and run both grounding stages.
 
-    Retrieval is confined to `collection=policy`, so the invoice being
+    Retrieval is confined to `collection=policy`, so the document being
     decided cannot be cited as the policy that justifies deciding it.
     """
 
     def process(self, ctx: TaskContext) -> TaskContext:
         doc: SourceDocument = ctx.metadata["document"]
-        invoice = ctx.metadata["invoice"]
+        document = ctx.metadata["extracted"]
 
         # Which rules apply is computed in code from the extracted fields,
         # before any retrieval happens. Retrieval then has to account for
         # all of them (app/decisions/coverage.py).
-        triggered = triggered_dimensions(
-            invoice, arithmetic_ok=not ctx.metadata["arithmetic_failures"]
-        )
+        vertical = get_vertical(doc.vertical)
+        checks = ctx.metadata["checks"]
+
+        triggered = vertical.triggers(document, checks)
         source = CoveredPolicy(
             RetrievedPolicy(doc.user_id),
-            obligations=load_obligations(ctx.db, doc.org_id, SCHEMA_NAME),
+            obligations=load_obligations(ctx.db, doc.org_id, doc.vertical),
             triggered=triggered,
-            terms=subject_terms(invoice),
+            terms=vertical.subject_terms(document),
         )
 
-        result = decide_invoice(
-            invoice,
+        result = decide(
+            document,
             source,
-            arithmetic_failures=ctx.metadata["arithmetic_failures"],
+            vertical=vertical,
+            checks=checks,
             unverified_fields=ctx.metadata["unverified"],
             user_id=doc.user_id,
         )
@@ -178,11 +179,11 @@ class ApplyRails(Node):
     def process(self, ctx: TaskContext) -> TaskContext:
         doc: SourceDocument = ctx.metadata["document"]
         result = ctx.metadata["decision_result"]
-        rule = rule_for(ctx.db, org_id=doc.org_id, schema_name=SCHEMA_NAME)
+        rule = rule_for(ctx.db, org_id=doc.org_id, schema_name=doc.vertical)
 
         final = apply_rails(
             result,
-            ctx.metadata["invoice"],
+            ctx.metadata["extracted"],
             ctx.metadata["unverified"],
             ctx.metadata["arithmetic_failures"],
             rule=rule,

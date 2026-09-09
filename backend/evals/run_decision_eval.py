@@ -58,14 +58,13 @@ from app.decisions.coverage import (  # noqa: E402
     subject_terms,
     triggered_dimensions,
 )
-from app.decisions.decide import decide_invoice  # noqa: E402
+from app.decisions.decide import decide  # noqa: E402
 from app.decisions.models import Outcome  # noqa: E402
 from app.decisions.policy import CoveredPolicy, PolicyCorpus  # noqa: E402
 from app.decisions.rails import AutoApproveRule, apply_rails  # noqa: E402
-from app.extraction.arithmetic import check_invoice  # noqa: E402
 from app.extraction.extract import extract  # noqa: E402
-from app.extraction.schemas.invoice import Invoice  # noqa: E402
 from app.ingestion.parsing import parse_document  # noqa: E402
+from app.verticals import get_vertical  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 DEFAULT_DATASET = Path(__file__).resolve().parent / "decisions.jsonl"
@@ -156,22 +155,24 @@ def run_case(case: Case, corpus, obligations: list) -> Result:
     path = FIXTURES / case.document
     text = parse_document(path.read_bytes(), "text/markdown", path.name)
 
-    extraction = extract(text, Invoice)
+    vertical = get_vertical("invoice")
+    extraction = extract(text, vertical.schema)
     invoice = extraction.data
-    arithmetic = check_invoice(invoice)
+    arithmetic = vertical.check(invoice)
 
-    triggered = triggered_dimensions(invoice, arithmetic_ok=arithmetic.ok)
+    triggered = triggered_dimensions(invoice, vertical, arithmetic)
     source = CoveredPolicy(
         corpus,
         obligations=obligations,
         triggered=triggered,
-        terms=subject_terms(invoice),
+        terms=subject_terms(invoice, vertical),
     )
 
-    result = decide_invoice(
+    result = decide(
         invoice,
         source,
-        arithmetic_failures=arithmetic.failures,
+        vertical=vertical,
+        checks=arithmetic,
         unverified_fields=extraction.unverified_fields,
     )
     final = apply_rails(
@@ -423,7 +424,7 @@ def _obligations_from_corpus(corpus: PolicyCorpus) -> list:
     and the corpus does not change between runs, so paying for it every time
     would make the eval something nobody runs.
     """
-    from app.decisions.coverage import Dimension, Obligation, extract_obligations
+    from app.decisions.coverage import Obligation, extract_obligations
 
     cache = DEFAULT_DATASET.with_suffix(".obligations.json")
     if cache.exists():
@@ -439,7 +440,7 @@ def _obligations_from_corpus(corpus: PolicyCorpus) -> list:
     return [
         Obligation(
             id=o["clause_id"],
-            dimension=Dimension(o["dimension"]),
+            dimension=o["dimension"],
             summary=o["summary"],
             clause_ref=o["clause_ref"],
             always_applies=o.get("always_applies", False),

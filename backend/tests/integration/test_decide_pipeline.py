@@ -183,6 +183,54 @@ def test_outcome_check_constraint_rejects_an_invented_outcome(db, user, org):
     db.rollback()
 
 
+def test_a_dimension_the_vertical_does_not_evaluate_cannot_be_stored(db, user, org):
+    """0007 held this as a CHECK naming nine invoice dimensions, which made
+    adding a document type a migration. It is now a foreign key into
+    `vertical_dimensions`, kept current from the registry — same closed set,
+    no DDL per vertical.
+
+    `deadline` is a real dimension. It belongs to tenders. An invoice
+    obligation claiming it is a rule nothing would ever check."""
+    from sqlalchemy.exc import IntegrityError
+
+    from app.db.models import PolicyObligation
+
+    doc = _document(db, user, Collection.policy, "procurement-policy.md", org)
+    db.add(
+        PolicyObligation(
+            org_id=org,
+            document_id=doc.id,
+            schema_name="invoice",
+            dimension="deadline",
+            summary="Bids close at noon",
+            clause_ref="4. Deadlines",
+        )
+    )
+    with pytest.raises(IntegrityError):
+        db.commit()
+    db.rollback()
+
+
+def test_the_registry_and_the_reference_table_agree(db):
+    """`sync_vertical_dimensions` is what makes registering a vertical the
+    whole of adding one. If it drifts, the foreign key starts rejecting
+    obligations for a vertical that legitimately evaluates them."""
+    from app.db.models import VerticalDimension
+    from app.decisions.coverage import sync_vertical_dimensions
+    from app.verticals import get_vertical, registered_verticals
+
+    sync_vertical_dimensions(db)
+    stored = {
+        (row.schema_name, row.dimension) for row in db.query(VerticalDimension).all()
+    }
+    expected = {
+        (name, dimension)
+        for name in registered_verticals()
+        for dimension in get_vertical(name).dimensions
+    }
+    assert expected <= stored
+
+
 def test_the_audit_join_answers_the_auditors_question(db, user, org):
     """One join: why was this decided, citing what, and what fired."""
     from app.db.models import DecisionCitation

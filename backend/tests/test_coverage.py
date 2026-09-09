@@ -13,7 +13,6 @@ import pytest
 
 from app.decisions.coverage import (
     CoverageReport,
-    Dimension,
     Obligation,
     check_coverage,
     triggered_dimensions,
@@ -21,6 +20,10 @@ from app.decisions.coverage import (
 from app.decisions.policy import CoveredPolicy, PolicyClause, PolicyCorpus
 from app.extraction.provenance import ExtractedField
 from app.extraction.schemas.invoice import Invoice
+from app.verticals import get_vertical
+from app.verticals.base import DeterministicChecks
+
+INVOICE = get_vertical("invoice")
 
 
 def _f(value):
@@ -58,33 +61,34 @@ def _obligation(dimension, clause_id=None, chunk_id=None, always=False, about=()
 
 
 def test_a_euro_invoice_does_not_trigger_the_currency_dimension():
-    assert Dimension.currency not in triggered_dimensions(_invoice())
+    assert "currency" not in triggered_dimensions(_invoice(), INVOICE)
 
 
 def test_a_usd_invoice_triggers_the_currency_dimension():
     """The M1 bug, now a trigger rather than a hope about the query."""
-    assert Dimension.currency in triggered_dimensions(_invoice(currency="USD"))
+    assert "currency" in triggered_dimensions(_invoice(currency="USD"), INVOICE)
 
 
 def test_currency_matching_is_case_and_space_insensitive():
-    assert Dimension.currency not in triggered_dimensions(_invoice(currency=" eur "))
+    assert "currency" not in triggered_dimensions(_invoice(currency=" eur "), INVOICE)
 
 
 def test_the_always_present_dimensions_are_always_triggered():
     """Amount and supplier apply to every invoice, which is exactly why
     they are the easiest ones to forget to ask about."""
-    dimensions = triggered_dimensions(_invoice())
-    assert {Dimension.amount, Dimension.supplier, Dimension.purchase_order} <= dimensions
+    dimensions = triggered_dimensions(_invoice(), INVOICE)
+    assert {"amount", "supplier", "purchase_order"} <= dimensions
 
 
 def test_short_payment_terms_trigger_the_payment_dimension():
-    assert Dimension.payment_terms in triggered_dimensions(
-        _invoice(issued="2026-02-12", due="2026-02-19")
+    assert "payment_terms" in triggered_dimensions(
+        _invoice(issued="2026-02-12", due="2026-02-19"), INVOICE
     )
 
 
 def test_bad_arithmetic_triggers_vat():
-    assert Dimension.vat in triggered_dimensions(_invoice(), arithmetic_ok=False)
+    checks = DeterministicChecks(ok=False, failures=["VAT does not add up"])
+    assert "vat" in triggered_dimensions(_invoice(), INVOICE, checks)
 
 
 # --- the check ----------------------------------------------------------
@@ -93,8 +97,8 @@ def test_bad_arithmetic_triggers_vat():
 def test_a_retrieved_obligation_is_covered():
     chunk = uuid.uuid4()
     report = check_coverage(
-        [_obligation(Dimension.amount, chunk_id=chunk)],
-        {Dimension.amount},
+        [_obligation("amount", chunk_id=chunk)],
+        {"amount"},
         {str(chunk)},
     )
     assert report.complete
@@ -103,21 +107,21 @@ def test_a_retrieved_obligation_is_covered():
 
 def test_an_untriggered_obligation_is_not_required():
     """A rule that does not apply is not a gap when it is absent."""
-    report = check_coverage([_obligation(Dimension.currency)], {Dimension.amount}, set())
+    report = check_coverage([_obligation("currency")], {"amount"}, set())
     assert report.triggered == []
     assert report.complete
 
 
 def test_a_triggered_obligation_that_was_not_retrieved_is_a_gap():
-    report = check_coverage([_obligation(Dimension.currency)], {Dimension.currency}, set())
+    report = check_coverage([_obligation("currency")], {"currency"}, set())
     assert not report.complete
-    assert report.missed[0].dimension is Dimension.currency
+    assert report.missed[0].dimension == "currency"
     assert "was not retrieved" in report.notes()[0]
 
 
 def test_always_applies_obligations_are_required_regardless():
     report = check_coverage(
-        [_obligation(Dimension.escalation, always=True)], set(), set()
+        [_obligation("escalation", always=True)], set(), set()
     )
     assert report.triggered
     assert not report.complete
@@ -129,10 +133,10 @@ def test_recall_is_measured_per_decision_not_per_query():
     chunk = uuid.uuid4()
     report = check_coverage(
         [
-            _obligation(Dimension.amount, chunk_id=chunk),
-            _obligation(Dimension.currency),
+            _obligation("amount", chunk_id=chunk),
+            _obligation("currency"),
         ],
-        {Dimension.amount, Dimension.currency},
+        {"amount", "currency"},
         {str(chunk)},
     )
     assert report.recall == 0.5
@@ -179,8 +183,8 @@ def test_a_missed_clause_is_repaired_not_merely_reported(corpus):
 
     covered = CoveredPolicy(
         inner,
-        obligations=[_obligation(Dimension.currency, currency_clause.id)],
-        triggered={Dimension.currency},
+        obligations=[_obligation("currency", currency_clause.id)],
+        triggered={"currency"},
     )
     clauses = covered.retrieve("supplier amount threshold")
 
@@ -195,8 +199,8 @@ def test_an_unrepairable_gap_survives_as_a_gap(corpus):
     inner = _RankingOnly(corpus, hide=set())
     covered = CoveredPolicy(
         inner,
-        obligations=[_obligation(Dimension.currency, "clause-that-was-deleted")],
-        triggered={Dimension.currency},
+        obligations=[_obligation("currency", "clause-that-was-deleted")],
+        triggered={"currency"},
     )
     covered.retrieve("anything")
     assert not covered.report.complete
@@ -207,11 +211,11 @@ def test_nothing_is_fetched_when_ranking_already_covered_it(corpus):
     covered = CoveredPolicy(
         inner,
         obligations=[
-            _obligation(Dimension.currency, next(
+            _obligation("currency", next(
                 c.id for c in corpus.clauses if c.ref.startswith("8.")
             ))
         ],
-        triggered={Dimension.currency},
+        triggered={"currency"},
     )
     covered.retrieve("currency euro")
     assert inner.lookups == [], "repair ran when there was nothing to repair"
@@ -284,44 +288,44 @@ def test_a_category_rule_does_not_bear_on_another_category():
     `amount` rule with nothing to say about a cleaning invoice. Every invoice
     triggers `amount`, so all fifteen category ladders were required and
     eight of them were repaired into the evidence every time."""
-    catering = _obligation(Dimension.amount, about=("catering", "hospitality"))
+    catering = _obligation("amount", about=("catering", "hospitality"))
     cleaning_invoice = {"office", "cleaning", "monthly", "consumables"}
 
-    assert not catering.bears_on({Dimension.amount}, cleaning_invoice)
+    assert not catering.bears_on({"amount"}, cleaning_invoice)
 
 
 def test_a_category_rule_bears_on_its_own_category():
-    catering = _obligation(Dimension.amount, about=("catering", "hospitality"))
-    assert catering.bears_on({Dimension.amount}, {"adventure", "works", "catering"})
+    catering = _obligation("amount", about=("catering", "hospitality"))
+    assert catering.bears_on({"amount"}, {"adventure", "works", "catering"})
 
 
 def test_an_unconditional_rule_bears_on_everything():
     """Most rules are like this: a EUR 500 PO threshold is about any purchase."""
-    general = _obligation(Dimension.purchase_order)
-    assert general.bears_on({Dimension.purchase_order}, {"anything", "at", "all"})
+    general = _obligation("purchase_order")
+    assert general.bears_on({"purchase_order"}, {"anything", "at", "all"})
 
 
 def test_an_unknown_subject_keeps_every_conditional_rule():
     """Skipping a rule that did matter is the failure this module exists to
     prevent, so not knowing the subject errs toward requiring more."""
-    catering = _obligation(Dimension.amount, about=("catering",))
-    assert catering.bears_on({Dimension.amount}, None)
+    catering = _obligation("amount", about=("catering",))
+    assert catering.bears_on({"amount"}, None)
 
 
 def test_the_dimension_gate_still_applies_first():
     """A currency rule about catering is still not required by an invoice
     that does not put currency in play."""
-    rule = _obligation(Dimension.currency, about=("catering",))
-    assert not rule.bears_on({Dimension.amount}, {"catering"})
+    rule = _obligation("currency", about=("catering",))
+    assert not rule.bears_on({"amount"}, {"catering"})
 
 
 def test_coverage_skips_rules_that_do_not_bear_on_the_document():
     report = check_coverage(
         [
-            _obligation(Dimension.amount, "general"),
-            _obligation(Dimension.amount, "telecoms", about=("telecoms",)),
+            _obligation("amount", "general"),
+            _obligation("amount", "telecoms", about=("telecoms",)),
         ],
-        {Dimension.amount},
+        {"amount"},
         set(),
         terms={"contoso", "cleaning"},
     )
@@ -344,7 +348,7 @@ def test_subject_terms_reads_supplier_cost_centre_and_lines():
             amount=_f(Decimal("285.00")),
         )
     ]
-    terms = subject_terms(invoice)
+    terms = subject_terms(invoice, INVOICE)
     assert {"catering", "head", "fac", "01"} <= terms
 
 
@@ -352,7 +356,7 @@ def test_subject_terms_survives_a_sparse_invoice():
     """An extraction that read almost nothing must not blow up the check."""
     from app.decisions.coverage import subject_terms
 
-    assert subject_terms(object()) == set()
+    assert subject_terms(object(), INVOICE) == set()
 
 
 def test_the_supplier_name_is_not_a_subject_term():
@@ -374,10 +378,10 @@ def test_the_supplier_name_is_not_a_subject_term():
             amount=_f(Decimal("620.00")),
         )
     ]
-    terms = subject_terms(invoice)
+    terms = subject_terms(invoice, INVOICE)
     assert "services" not in terms
     assert "contoso" not in terms
     assert {"office", "cleaning", "monthly"} <= terms
 
-    legal = _obligation(Dimension.amount, about=("legal", "services"))
-    assert not legal.bears_on({Dimension.amount}, terms)
+    legal = _obligation("amount", about=("legal", "services"))
+    assert not legal.bears_on({"amount"}, terms)

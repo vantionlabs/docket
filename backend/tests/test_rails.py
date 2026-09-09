@@ -14,6 +14,7 @@ from app.decisions.policy import PolicyClause, PolicyCorpus
 from app.decisions.rails import AutoApproveRule, apply_rails
 from app.extraction.provenance import ExtractedField
 from app.extraction.schemas.invoice import Invoice
+from app.verticals import get_vertical
 
 CLAUSE = PolicyClause(
     id="clause-3",
@@ -235,19 +236,17 @@ def _corpus():
 def test_non_euro_invoice_retrieves_the_currency_clause():
     """The M1 spike missed this: a USD invoice never retrieved clause 8,
     because the clause says 'euro' and the invoice says 'USD'."""
-    from app.decisions.decide import invoice_query
-
     invoice = _invoice()
     invoice.currency = _field("USD")
-    retrieved = _corpus().retrieve(invoice_query(invoice), top_k=8)
+    query = get_vertical("invoice").query(invoice)
+    retrieved = _corpus().retrieve(query, top_k=8)
     assert any(clause.ref.startswith("8.") for clause in retrieved)
 
 
 def test_standing_dimensions_are_always_asked():
     """Threshold, supplier list and PO clauses come back for any invoice."""
-    from app.decisions.decide import invoice_query
-
-    refs = [c.ref for c in _corpus().retrieve(invoice_query(_invoice()), top_k=8)]
+    query = get_vertical("invoice").query(_invoice())
+    refs = [c.ref for c in _corpus().retrieve(query, top_k=8)]
     assert any(r.startswith("2.") for r in refs)  # purchase orders
     assert any(r.startswith("3.") for r in refs)  # spend thresholds
     assert any(r.startswith("4.") for r in refs)  # approved suppliers

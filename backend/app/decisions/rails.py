@@ -127,11 +127,15 @@ def _grounding_note(failure: str) -> str:
 
 def apply_rails(
     result: DecisionResult,
-    invoice: Invoice,
+    document,
     unverified_fields: list[str],
-    arithmetic_failures: list[str],
+    check_failures: list[str],
     rule: AutoApproveRule | None = None,
 ) -> FinalDecision:
+    """Rails 1, 1b and 2 read nothing off the document, so they hold for any
+    vertical. Only rail 3's gate is vertical-shaped, and it is opt-in: with
+    no rule configured — which is every vertical but invoices today — the
+    decision routes to a human, which is the v1 default anyway."""
     proposed = result.decision
     notes: list[str] = []
     unmet = list(proposed.unmet_conditions)
@@ -165,12 +169,14 @@ def apply_rails(
         )
         unmet.extend(f"unverified field: {name}" for name in unverified_fields)
 
-    # Arithmetic is not its own rail, but it is never an automatic approval.
-    if arithmetic_failures:
+    # The deterministic checks are not their own rail, but a document that
+    # fails them is never an automatic approval. Invoices fail arithmetic;
+    # tenders fail chronology. Neither is a matter of judgement.
+    if check_failures:
         if outcome is Outcome.auto_approve:
             outcome = Outcome.route_for_approval
-        notes.append("The arithmetic does not check out: " + "; ".join(arithmetic_failures))
-        unmet.extend(arithmetic_failures)
+        notes.append("The checks did not pass: " + "; ".join(check_failures))
+        unmet.extend(check_failures)
 
     # Rail 3: auto-approve needs an explicit, active rule that passes.
     if outcome is Outcome.auto_approve:
@@ -180,7 +186,7 @@ def apply_rails(
                 "No active auto-approve rule covers this document, so it goes to a reviewer."
             )
         else:
-            rule_failures = rule.unmet(invoice)
+            rule_failures = rule.unmet(document)
             if rule_failures:
                 outcome = Outcome.route_for_approval
                 notes.append(

@@ -22,6 +22,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    ForeignKeyConstraint,
     Integer,
     Numeric,
     Text,
@@ -141,6 +142,13 @@ class SourceDocument(Base):
         default=Collection.transactional,
         index=True,
     )
+    vertical: Mapped[str] = mapped_column(Text, default="invoice", server_default="invoice")
+    """Which document type this is, and so which vertical decides it.
+
+    On the row rather than in the workflow because the workflow is generic:
+    it asks the document what it is. A transactional document that is not a
+    known vertical fails at `get_vertical`, loudly, instead of being decided
+    against the wrong policy."""
     filename: Mapped[str] = mapped_column(Text)
     r2_key: Mapped[str] = mapped_column(Text, unique=True)
     content_type: Mapped[str] = mapped_column(Text)
@@ -528,6 +536,21 @@ class Execution(Base):
     completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
 
+class VerticalDimension(Base):
+    """The dimensions each vertical evaluates, as data.
+
+    0007 held this list in a CHECK constraint, which made adding a document
+    type a migration. It is the same closed set, kept current from the
+    registry by `app.decisions.coverage.sync_vertical_dimensions`, so that
+    registering a vertical is the whole of adding one.
+    """
+
+    __tablename__ = "vertical_dimensions"
+
+    schema_name: Mapped[str] = mapped_column(Text, primary_key=True)
+    dimension: Mapped[str] = mapped_column(Text, primary_key=True)
+
+
 class PolicyObligation(Base):
     """One rule a policy clause imposes, indexed once at ingest.
 
@@ -544,6 +567,13 @@ class PolicyObligation(Base):
     """
 
     __tablename__ = "policy_obligations"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["schema_name", "dimension"],
+            ["vertical_dimensions.schema_name", "vertical_dimensions.dimension"],
+            name="fk_policy_obligations_dimension",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_uuid)
     org_id: Mapped[uuid.UUID] = _org_fk(nullable=False)
@@ -554,8 +584,10 @@ class PolicyObligation(Base):
         ForeignKey("document_chunks.id", ondelete="CASCADE"), nullable=True, index=True
     )
     dimension: Mapped[str] = mapped_column(Text, index=True)
-    """app.decisions.coverage.Dimension. A closed set: a dimension the code
-    cannot evaluate is one that cannot be checked."""
+    """One of `app.verticals.get_vertical(schema_name).dimensions`, enforced
+    by a composite foreign key into `vertical_dimensions`. Closed on purpose:
+    a dimension the code cannot evaluate is one that cannot be checked, and
+    an unchecked rule in the index reads exactly like a checked one."""
     schema_name: Mapped[str] = mapped_column(Text, default="invoice", index=True)
     """Which kind of document this rule governs.
 

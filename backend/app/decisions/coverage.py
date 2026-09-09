@@ -40,34 +40,20 @@ import re
 import uuid
 from dataclasses import dataclass, field
 from decimal import Decimal
-from enum import StrEnum
 
 from app.logging import get_logger
 
 log = get_logger(__name__)
 
 
-class Dimension(StrEnum):
-    """What an obligation governs.
-
-    A closed set, like `Outcome` and for the same reason: a dimension the
-    code cannot evaluate is a dimension that cannot be checked, and an
-    open-ended list would let the extractor invent obligations nothing
-    ever tests.
-    """
-
-    amount = "amount"
-    """Thresholds and approval bands."""
-    purchase_order = "purchase_order"
-    supplier = "supplier"
-    currency = "currency"
-    vat = "vat"
-    payment_terms = "payment_terms"
-    duplicate = "duplicate"
-    scope = "scope"
-    """What the policy does and does not cover at all."""
-    escalation = "escalation"
-    """What to do when the policy does not settle it."""
+# Dimensions are declared per vertical (app/verticals/), not globally.
+#
+# They were a global enum while there was one document type, and that read
+# as a closed set when it was really the invoice's list: amount, VAT,
+# purchase order, supplier. A tender has none of those and has delivery
+# windows and penalty clauses instead. The set is still closed *within* a
+# vertical, which is what stops an extractor inventing obligations nothing
+# evaluates; it is just no longer the same set for every document.
 
 
 @dataclass(frozen=True)
@@ -75,7 +61,7 @@ class Obligation:
     """One rule the policy imposes, tied to the clause that states it."""
 
     id: str
-    dimension: Dimension
+    dimension: str
     summary: str
     """One line, for the reviewer. Never a substitute for the clause."""
     clause_ref: str
@@ -96,7 +82,7 @@ class Obligation:
     """Present for amount obligations, so a band can be evaluated in code."""
 
     def bears_on(
-        self, triggered: set["Dimension"], subject_terms: set[str] | None = None
+        self, triggered: set[str], subject_terms: set[str] | None = None
     ) -> bool:
         """Does this rule have anything to say about this document?
 
@@ -163,79 +149,34 @@ class CoverageReport:
 # --- triggers: evaluated in code, never by a model ----------------------
 
 
-def triggered_dimensions(invoice, arithmetic_ok: bool = True) -> set[Dimension]:
+def triggered_dimensions(document, vertical, checks=None) -> set[str]:
     """Which dimensions this document puts in play.
 
-    Deliberately generous. A dimension costs one clause in the prompt if it
-    turns out not to matter, and costs a missed rule if it is left out, so
-    every branch here errs toward including it. `scope` and `escalation`
-    are not listed because their obligations carry `always_applies`.
+    Delegates to the vertical, which is the only thing that knows what a
+    document's own data implies. Kept as a function because the workflows
+    and the eval both call it and neither should care where it lives.
     """
-    dimensions = {
-        # Every invoice has an amount and a supplier, so the rules about
-        # them always apply. This is why the currency bug was possible: the
-        # dimensions that always apply are the easiest ones to assume.
-        Dimension.amount,
-        Dimension.supplier,
-        Dimension.purchase_order,
-        Dimension.vat,
-        Dimension.duplicate,
-    }
+    from app.verticals.base import DeterministicChecks
 
-    if _currency_of(invoice) not in ("EUR", ""):
-        dimensions.add(Dimension.currency)
-    if _payment_days(invoice) is not None:
-        dimensions.add(Dimension.payment_terms)
-    if not arithmetic_ok:
-        dimensions.add(Dimension.vat)
-    return dimensions
+    return vertical.triggers(document, checks or DeterministicChecks())
 
 
-def _currency_of(invoice) -> str:
-    currency = getattr(invoice, "currency", None)
-    return str(getattr(currency, "value", "") or "").strip().upper()
+def subject_terms(document, vertical) -> set[str]:
+    """What this document is about, for matching `applies_when`.
 
-
-def _payment_days(invoice) -> int | None:
-    due, issued = getattr(invoice, "due_on", None), getattr(invoice, "issued_on", None)
-    if due is None or issued is None:
-        return None
+    Delegates to the vertical. An invoice is about what was bought; a tender
+    is about what is being built. Neither is about who the counterparty is,
+    for the same reason: a trading name collides with spend categories.
+    """
     try:
-        return (due.value - issued.value).days
-    except (AttributeError, TypeError):
-        return None
-
-
-def subject_terms(invoice) -> set[str]:
-    """The words this document is about, for matching `applies_when`.
-
-    Line items and cost centre: what was actually bought. Lowercased single
-    words, because a rule written about "catering and hospitality" should
-    match a line reading "Catering, per head" without either side having to
-    guess the other's phrasing.
-
-    **The supplier name is deliberately excluded.** It says who sold, not
-    what was bought, and trading names are full of words that collide with
-    spend categories: "Contoso Cleaning Services BV" contributed the token
-    `services`, which matched the delegation matrix's "Legal Services"
-    ladder and pulled it into the evidence for a cleaning invoice. Suppliers
-    are what the `supplier` dimension is for.
-    """
-    terms: set[str] = set()
-
-    def add(text: str | None) -> None:
-        if text:
-            terms.update(_WORD.findall(str(text).lower()))
-
-    add(getattr(getattr(invoice, "cost_centre", None), "value", None))
-    for item in getattr(invoice, "line_items", None) or []:
-        add(getattr(getattr(item, "description", None), "value", None))
-    return terms
+        return vertical.subject_terms(document)
+    except Exception:  # noqa: BLE001 -- a sparse extraction must not break coverage
+        return set()
 
 
 def check_coverage(
     obligations: list[Obligation],
-    triggered: set[Dimension],
+    triggered: set[str],
     retrieved_clause_ids: set[str],
     terms: set[str] | None = None,
 ) -> CoverageReport:
@@ -280,18 +221,10 @@ Getting these wrong is worse than missing an obligation: it pulls rules that
 do not apply into a decision and pushes out ones that do.
 
 For each clause, list the obligations it imposes. An obligation is one rule,
-tied to one dimension of the document being judged. Use only these
-dimensions:
-
-  amount          thresholds, approval bands, spend limits
-  purchase_order  whether a PO is required, and when
-  supplier        approved lists, supplier checks
-  currency        which currencies are acceptable, and what to do otherwise
-  vat             VAT rates, arithmetic that must hold
-  payment_terms   payment periods, early settlement, unusual terms
-  duplicate       repeat or reissued documents
-  scope           what this policy covers and does not cover
-  escalation      what to do when the policy does not settle a case
+tied to one dimension of the document being judged. The dimensions available
+are given to you below; use only those. A rule that fits none of them is a
+rule this system cannot check, and inventing a dimension for it means it
+will never be checked.
 
 Set always_applies to true only when the obligation must be considered for
 EVERY document, regardless of its contents: scope and escalation rules
@@ -337,7 +270,7 @@ def extract_obligations(
     from app.observability.usage import record_run_usage
 
     class _Obligation(BaseModel):
-        dimension: Dimension
+        dimension: str
         summary: str = Field(description="One plain line a reviewer could act on")
         governs: str = Field(
             default=schema_name,
@@ -359,8 +292,12 @@ def extract_obligations(
     class _Obligations(BaseModel):
         obligations: list[_Obligation]
 
+    from app.verticals import get_vertical
+
+    dimensions = sorted(get_vertical(schema_name).dimensions)
     agent = Agent(grounding_model(), output_type=_Obligations, instructions=_EXTRACT_PROMPT)
     result = agent.run_sync(
+        f"AVAILABLE DIMENSIONS: {', '.join(dimensions)}\n"
         f"TARGET DOCUMENT KIND: {schema_name}\n"
         f"POLICY DOCUMENT: {document_title or clause_ref}\n\n"
         f"CLAUSE ({clause_ref}):\n{clause_text}"
@@ -372,11 +309,68 @@ def extract_obligations(
         model=settings.grounding_model,
     )
 
-    return [o.model_dump(mode="json") for o in result.output.obligations]
+    # Two drops, for two different mistakes.
+    #
+    # A dimension outside this vertical's set is one nothing evaluates; it
+    # would sit in the index looking exactly like a checked rule.
+    #
+    # `governs != schema_name` is the model saying the clause belongs to a
+    # different policy — a travel policy's threshold ladder read while
+    # indexing for invoices. The prompt promises those are excluded and for
+    # a while nothing excluded them: 37 of 127 rows in the first real corpus
+    # were `governs="other"`, stored, never loaded, and paying for a model
+    # call each. Filtering at the source is the difference between a
+    # promise in a prompt and a property of the index.
+    kept = []
+    for obligation in result.output.obligations:
+        if obligation.dimension not in dimensions:
+            log.warning(
+                "coverage.invented_dimension",
+                dimension=obligation.dimension,
+                clause=clause_ref,
+            )
+            continue
+        if obligation.governs != schema_name:
+            log.info(
+                "coverage.governs_another_kind",
+                governs=obligation.governs,
+                target=schema_name,
+                clause=clause_ref,
+            )
+            continue
+        kept.append(obligation.model_dump(mode="json"))
+    return kept
 
 
 _WORD = re.compile(r"[a-z0-9]+")
 _REF = re.compile(r"^(#{1,6})\s+(.*)$")
+
+
+def sync_vertical_dimensions(db) -> int:
+    """Make the reference table match the registry. Idempotent.
+
+    Called before obligations are written, so a vertical registered in code
+    but never synced does not fail the foreign key at index time. Rows are
+    only inserted, never deleted: a dimension a vertical has dropped may
+    still be referenced by obligations indexed under an older version of it,
+    and removing it would either fail or orphan them. Retiring one is a
+    deliberate act with a data migration, not a side effect of a deploy.
+    """
+    from sqlalchemy.dialects.postgresql import insert
+
+    from app.db.models import VerticalDimension
+    from app.verticals import get_vertical, registered_verticals
+
+    rows = [
+        {"schema_name": name, "dimension": dimension}
+        for name in registered_verticals()
+        for dimension in sorted(get_vertical(name).dimensions)
+    ]
+    result = db.execute(
+        insert(VerticalDimension).values(rows).on_conflict_do_nothing()
+    )
+    db.commit()
+    return result.rowcount or 0
 
 
 def load_obligations(
@@ -397,6 +391,9 @@ def load_obligations(
     from sqlalchemy import select
 
     from app.db.models import PolicyObligation
+    from app.verticals import get_vertical
+
+    known = get_vertical(schema_name).dimensions
 
     rows = db.scalars(
         select(PolicyObligation).where(
@@ -407,18 +404,16 @@ def load_obligations(
     ).all()
     obligations: list[Obligation] = []
     for row in rows:
-        try:
-            dimension = Dimension(row.dimension)
-        except ValueError:
-            # A dimension this build does not know: skip it rather than
-            # fail. An unknown rule cannot be checked, and pretending it
-            # was covered would be worse than not checking it.
+        if row.dimension not in known:
+            # A dimension this vertical does not use: skip it rather than
+            # require it. An unknown rule cannot be checked, and pretending
+            # it was covered would be worse than not checking it.
             log.warning("coverage.unknown_dimension", dimension=row.dimension, id=str(row.id))
             continue
         obligations.append(
             Obligation(
                 id=str(row.id),
-                dimension=dimension,
+                dimension=row.dimension,
                 summary=row.summary,
                 clause_ref=row.clause_ref,
                 chunk_id=row.chunk_id,

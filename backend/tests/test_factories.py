@@ -174,10 +174,10 @@ def test_the_travel_policy_says_it_does_not_govern_invoices():
 def test_every_scenario_names_dimensions_the_checker_knows(scenario):
     """A dimension the coverage check cannot evaluate would silently never
     be required, and the case would pass for the wrong reason."""
-    from app.decisions.coverage import Dimension
+    from app.verticals import get_vertical
 
     for name in scenario.dimensions:
-        assert name in {d.value for d in Dimension}, f"{scenario.key}: {name}"
+        assert name in get_vertical("invoice").dimensions, f"{scenario.key}: {name}"
 
 
 # --- the train / holdout split -------------------------------------------

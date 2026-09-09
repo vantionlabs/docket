@@ -175,8 +175,18 @@ class IndexObligations(Node):
             ctx.nodes[self.name] = {"skipped": "not a policy document"}
             return ctx
 
-        from app.decisions.coverage import extract_obligations
+        from app.decisions.coverage import extract_obligations, sync_vertical_dimensions
         from app.decisions.policy import _clause_ref
+
+        # A vertical registered in code but never written down cannot be
+        # referenced by an obligation. Cheap, idempotent, and it means
+        # adding a document type needs no DDL.
+        sync_vertical_dimensions(ctx.db)
+
+        # Which document kind this policy governs. A corpus that governs two
+        # kinds is indexed twice, once per kind: the dimensions on offer and
+        # the "does this clause govern the target?" judgement both differ.
+        governs = doc.vertical
 
         # Re-indexing replaces: a policy that changed should not leave the
         # rules it used to impose lying around as coverage requirements.
@@ -193,7 +203,7 @@ class IndexObligations(Node):
         ):
             ref = _clause_ref(doc.filename, chunk.content, chunk.chunk_index)
             for obligation in extract_obligations(
-                chunk.content, ref, document_title=doc.filename
+                chunk.content, ref, document_title=doc.filename, schema_name=governs
             ):
                 ctx.db.add(
                     PolicyObligation(
@@ -203,7 +213,7 @@ class IndexObligations(Node):
                         dimension=obligation["dimension"],
                         summary=obligation["summary"],
                         clause_ref=ref,
-                        schema_name=obligation.get("governs", "invoice"),
+                        schema_name=obligation.get("governs", governs),
                         in_force=obligation.get("in_force", True),
                         always_applies=obligation.get("always_applies", False),
                         threshold=obligation.get("threshold"),
@@ -212,7 +222,9 @@ class IndexObligations(Node):
                 stored += 1
         ctx.db.commit()
 
-        log.info("policy.indexed", document_id=str(doc.id), obligations=stored)
+        log.info(
+            "policy.indexed", document_id=str(doc.id), governs=governs, obligations=stored
+        )
         ctx.nodes[self.name] = {"obligations": stored}
         return ctx
 
