@@ -13,6 +13,8 @@ import { ApiKeyAuth } from "./api/ApiKeyAuth.js";
 import { ApiV1Live } from "./api/v1/Handlers.js";
 import { ContactRpcLive } from "./contact/ContactRpcLive.js";
 import { ContactStore } from "./contact/ContactStore.js";
+import { DecisionRpcLive } from "./decision/DecisionRpcLive.js";
+import { DecisionStore } from "./decision/DecisionStore.js";
 import { Mailer } from "./email/Mailer.js";
 import { HealthHttp } from "./health/HealthHttp.js";
 import { HealthRpcLive } from "./health/HealthRpcLive.js";
@@ -33,6 +35,8 @@ const RpcLive = RpcServer.layer(AppRpcs).pipe(
   Layer.provide(AccessRpcLive),
   Layer.provide(ContactRpcLive),
   Layer.provide(ContactStore.layer),
+  Layer.provide(DecisionRpcLive),
+  Layer.provide(DecisionStore.layer),
   Layer.provide(AuthMiddlewareLive),
   Layer.provide(AuditLog.layer),
   Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
@@ -84,6 +88,7 @@ const HttpLive = Layer.unwrap(
       Layer.provide(Auth.layer),
       Layer.provide(ApiKeyAuth.layer),
       Layer.provide(ContactStore.layer),
+      Layer.provide(DecisionStore.layer),
       Layer.provide(PermissionResolver.layer),
       // Swap `layerStoreMemory` for `layerStoreRedis` to share limits across workers.
       Layer.provide(RateLimiter.layer),

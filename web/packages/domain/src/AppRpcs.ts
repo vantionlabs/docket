@@ -1,4 +1,5 @@
 import { ContactRpcs } from "./contact/ContactRpc.js";
+import { DecisionRpcs } from "./decision/DecisionRpc.js";
 import { HealthRpcs } from "./health/HealthRpc.js";
 import { AccessRpcs } from "./iam/AccessRpc.js";
 import { IamRpcs } from "./iam/IamRpc.js";
@@ -20,4 +21,5 @@ export const AppRpcs = HealthRpcs
   .merge(IamRpcs)
   .merge(OrganizationRpcs)
   .merge(AccessRpcs)
-  .merge(ContactRpcs);
+  .merge(ContactRpcs)
+  .merge(DecisionRpcs);
