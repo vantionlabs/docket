@@ -128,6 +128,7 @@ from app.api.routers import (  # noqa: E402
     decisions,
     documents,
     events,
+    replay,
     rules,
     threads,
     usage,
@@ -161,6 +162,7 @@ app.include_router(webhooks.router)
 app.include_router(documents.router)
 app.include_router(decisions.router)
 app.include_router(rules.router)
+app.include_router(replay.router)
 app.include_router(audit.router)
 app.include_router(threads.router)
 app.include_router(chat.router)

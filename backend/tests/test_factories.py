@@ -226,3 +226,28 @@ def test_both_halves_carry_the_same_mix():
         train_share = train[outcome] / sum(train.values())
         holdout_share = holdout[outcome] / sum(holdout.values())
         assert abs(train_share - holdout_share) < 0.10, outcome
+
+
+def test_a_generated_invoice_validates_as_the_extraction_schema():
+    """The fixtures store an extraction, and an extraction that cannot be
+    read back into an Invoice is one every consumer has to skip.
+
+    Five thousand volume fixtures carried four fields for months. Nothing
+    noticed, because the list view renders four fields; the replay was the
+    first consumer to need the whole document and could read none of them.
+    """
+    from app.extraction.schemas.invoice import Invoice
+
+    for invoice in build_invoices(40):
+        parsed = Invoice.model_validate(invoice.as_extraction_fields())
+        assert parsed.total_incl_vat.value == invoice.total_incl_vat
+        assert parsed.supplier.value == invoice.supplier
+        assert (parsed.po_number.value if parsed.po_number else None) == invoice.po_number
+
+
+def test_the_no_purchase_order_scenario_really_has_no_purchase_order():
+    """The rails read `po_number`. A scenario labelled for a missing PO that
+    stored one anyway would pass its own test and prove nothing."""
+    missing = [i for i in build_invoices(200) if i.scenario.key == "no_purchase_order"]
+    assert missing, "the weighted population should produce some"
+    assert all(i.po_number is None for i in missing)

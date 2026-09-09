@@ -251,6 +251,72 @@ class RuleOut(BaseModel):
     created_at: datetime
 
 
+# --- replay ---
+class ReplayRequest(BaseModel):
+    """A rule that does not exist yet, to be run over decided history.
+
+    Deliberately the same shape as `RuleIn.conditions`, so what is replayed
+    and what would be saved are the same object. `conditions: null` asks the
+    baseline question — rail 3 switched off, everything queued — which is
+    what any proposed rule has to improve on.
+    """
+
+    conditions: RuleConditions | None = Field(
+        default=None,
+        description="The proposed gate. Null replays with no rule at all.",
+    )
+    name: str = Field(default="proposed", description="What to call it in the results.")
+    schema_name: str = Field(default="invoice")
+    limit: int | None = Field(
+        default=None, ge=1, le=20000, description="Most recent N decisions only."
+    )
+
+
+class FlipOut(BaseModel):
+    decision_id: uuid.UUID
+    document_id: uuid.UUID
+    filename: str
+    was: str
+    would_be: str
+    amount: Decimal | None
+    supplier: str | None
+    reason: str
+
+
+class ReplayOut(BaseModel):
+    """The answer, with its limits in the payload rather than the prose.
+
+    `unreplayable` is a first-class field for the same reason the module
+    counts it: a flip count over a silently smaller population is a number
+    that looks right and is not.
+    """
+
+    considered: int
+    unreplayable: int
+    auto_approved_before: int
+    auto_approved_after: int
+    automation_rate_before: float
+    automation_rate_after: float
+    value_newly_automatic: Decimal
+    newly_automatic: list[FlipOut]
+    newly_reviewed: list[FlipOut]
+
+
+class ExposureOut(BaseModel):
+    """Which decisions rest on one clause. Exact, and no further.
+
+    Editing a clause changes what the model would propose, which this cannot
+    know without asking it again. So this reports the blast radius and stops:
+    these decisions were reached by citing this text.
+    """
+
+    clause_ref: str
+    decisions: int
+    amount: Decimal
+    outcomes: dict[str, int]
+    sample: list[uuid.UUID]
+
+
 # --- audit ---
 class ExecutionOut(BaseModel):
     id: uuid.UUID

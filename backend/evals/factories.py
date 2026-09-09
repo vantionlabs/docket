@@ -168,8 +168,51 @@ class Invoice:
     total_incl_vat: Decimal
     currency: str
     invoice_number: str
+    # Everything the extraction schema has. The generator always knew these
+    # — it wrote them into the markdown — and for a while it dropped them on
+    # the way out, so the volume fixtures stored a four-field extraction that
+    # would not validate back into an Invoice. Nothing noticed until the
+    # replay tried to read five thousand of them and could read none.
+    vat_amount: Decimal = Decimal(0)
+    issued_on: date = date(2026, 1, 1)
+    due_on: date | None = None
+    po_number: str | None = None
+    cost_centre: str | None = None
+    lines: list[tuple[str, int, Decimal, Decimal]] = field(default_factory=list)
     duplicate_of: str | None = None
     tags: list[str] = field(default_factory=list)
+
+    def as_extraction_fields(self) -> dict:
+        """The extraction JSON the pipeline would have stored for this
+        invoice: every field, each with the span it was read from."""
+
+        def f(value):
+            return {"value": str(value), "source_span": str(value)}
+
+        fields = {
+            "supplier": f(self.supplier),
+            "invoice_number": f(self.invoice_number),
+            "total_incl_vat": f(self.total_incl_vat),
+            "vat_amount": f(self.vat_amount),
+            "currency": f(self.currency),
+            "issued_on": f(self.issued_on.isoformat()),
+            "line_items": [
+                {
+                    "description": f(description),
+                    "quantity": f(quantity),
+                    "unit_price": f(unit_price),
+                    "amount": f(amount),
+                }
+                for description, quantity, unit_price, amount in self.lines
+            ],
+        }
+        if self.due_on is not None:
+            fields["due_on"] = f(self.due_on.isoformat())
+        if self.po_number is not None:
+            fields["po_number"] = f(self.po_number)
+        if self.cost_centre is not None:
+            fields["cost_centre"] = f(self.cost_centre)
+        return fields
 
 
 def _stable(text: str) -> int:
@@ -569,6 +612,12 @@ def build_invoice(rng: random.Random, scenario: Scenario, index: int) -> Invoice
         total_incl_vat=total,
         currency=currency,
         invoice_number=number,
+        vat_amount=vat,
+        issued_on=issued,
+        due_on=due,
+        po_number=po,
+        cost_centre=cost_centre,
+        lines=lines,
         duplicate_of=duplicate_of,
         tags=tags,
     )

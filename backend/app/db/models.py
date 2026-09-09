@@ -13,6 +13,7 @@ fastapi-users against this table; the rest of the app just reads
 import enum
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
 from fastapi_users.db import SQLAlchemyBaseUserTableUUID
 from pgvector.sqlalchemy import Vector
@@ -416,6 +417,14 @@ class Decision(Base):
     )
 
     outcome: Mapped[str] = mapped_column(Text)  # app.decisions.models.Outcome
+    proposed_outcome: Mapped[str | None] = mapped_column(Text, nullable=True)
+    """What the model proposed, before the rails. The gap between this and
+    `outcome` is the override rate, and it is what tells a client whether a
+    threshold can widen. It is also what makes the history replayable: the
+    rails are deterministic given their inputs, so a counterfactual rule can
+    be run over five thousand past decisions with no model calls — but only
+    if the input was kept. NULL on rows decided before 0011 where the rails
+    did fire; those are reported as unreplayable rather than assumed."""
     rationale: Mapped[str] = mapped_column(Text, default="")
     unmet_conditions: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)
     rail_notes: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)
@@ -426,6 +435,13 @@ class Decision(Base):
     rule_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     grounding_passed: Mapped[bool] = mapped_column(Boolean, default=False)
     grounding_failure: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    coverage_complete: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    """Rail 1b's input: did retrieval find every rule that applied. NULL means
+    coverage was not checked, which is not the same as checked and clean."""
+    coverage_recall: Mapped[Decimal | None] = mapped_column(Numeric(4, 3), nullable=True)
+    """Share of applicable obligations retrieval found, per decision. The
+    number the docs treat as central, previously discarded after logging."""
 
     status: Mapped[DecisionStatus] = mapped_column(
         Enum(DecisionStatus, name="decision_status", native_enum=False, length=20),

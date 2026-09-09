@@ -44,13 +44,44 @@ from evals.factories import build_invoices  # noqa: E402
 MARKER = "volume-fixture"
 DEMO_EMAIL = "demo@northwind.nl"
 
-OUTCOMES = [
-    ("route_for_approval", DecisionStatus.executed, 40),
-    ("route_for_approval", DecisionStatus.pending_review, 25),
-    ("reject", DecisionStatus.rejected, 15),
-    ("needs_human", DecisionStatus.pending_review, 15),
-    ("auto_approve", DecisionStatus.executed, 5),
-]
+# How often a decision fails grounding regardless of what the invoice says.
+# The M5 baseline measured 33 of 99 grounded, so a third is generous rather
+# than pessimistic; the fixtures should not look better than the real thing.
+GROUNDING_FAILURE_RATE = 0.12
+
+
+def _outcomes(scenario, rng) -> tuple[str, str, bool, DecisionStatus]:
+    """(proposed, final, grounded, status) for one fixture, coherently.
+
+    The proposal is the scenario's own expected outcome — that is what the
+    label means. The final outcome is what the rails do to it with no rule
+    configured, which is the demo org's actual state: rail 3 has nothing to
+    authorise an automatic approval, so a proposed `auto_approve` queues.
+
+    Deriving the two separately is the point. An earlier version assigned a
+    final outcome from a fixed population and set the proposal equal to it,
+    which made the fixtures internally incoherent — a clean invoice stored
+    as `reject` — and made the loosening direction unreachable: no rule
+    could ever release a decision whose proposal was already the outcome.
+    """
+    proposed = scenario.expected
+
+    if rng.random() < GROUNDING_FAILURE_RATE:
+        return proposed, "needs_human", False, DecisionStatus.pending_review
+
+    if proposed == "auto_approve":
+        # Rail 3 with no active rule. This is the population a proposed rule
+        # is asking about, and there is no point in fixtures without it.
+        final = "route_for_approval"
+    else:
+        final = proposed
+
+    if final == "reject":
+        return proposed, final, True, DecisionStatus.rejected
+    status = rng.choice(
+        [DecisionStatus.executed] * 3 + [DecisionStatus.pending_review] * 2
+    )
+    return proposed, final, True, status
 
 
 def purge(db) -> int:
@@ -77,7 +108,6 @@ def main() -> int:
     args = parser.parse_args()
 
     rng = random.Random(23)
-    population = [(o, s) for o, s, weight in OUTCOMES for _ in range(weight)]
 
     with SessionLocal() as db:
         if args.purge:
@@ -100,12 +130,11 @@ def main() -> int:
         # you nothing about the app.
         for start in range(0, len(invoices), 250):
             batch = invoices[start : start + 250]
-            for offset, invoice in enumerate(batch):
-                index = start + offset
+            for invoice in batch:
                 created = now - timedelta(
                     days=rng.uniform(0, args.days), seconds=rng.uniform(0, 86400)
                 )
-                outcome, status = population[index % len(population)]
+                proposed, outcome, grounded, status = _outcomes(invoice.scenario, rng)
 
                 document = SourceDocument(
                     user_id=user.id,
@@ -125,18 +154,11 @@ def main() -> int:
                     document_id=document.id,
                     schema_name="invoice",
                     document_text=invoice.markdown,
-                    fields={
-                        "supplier": {"value": invoice.supplier, "source_span": invoice.supplier},
-                        "invoice_number": {
-                            "value": invoice.invoice_number,
-                            "source_span": invoice.invoice_number,
-                        },
-                        "total_incl_vat": {
-                            "value": str(invoice.total_incl_vat),
-                            "source_span": str(invoice.total_incl_vat),
-                        },
-                        "currency": {"value": invoice.currency, "source_span": invoice.currency},
-                    },
+                    # The complete schema, not the four fields a list view
+                    # happens to render. A fixture that cannot be validated
+                    # back into an Invoice is a fixture the replay, the
+                    # detail screen and any future analysis all have to skip.
+                    fields=invoice.as_extraction_fields(),
                     unverified_fields=[],
                     arithmetic_ok="arithmetic" not in invoice.scenario.key,
                     arithmetic_failures=[],
@@ -156,7 +178,9 @@ def main() -> int:
                     unmet_conditions=[invoice.scenario.note],
                     rail_notes=[],
                     rule_id=MARKER,
-                    grounding_passed=outcome != "needs_human",
+                    proposed_outcome=proposed,
+                    coverage_complete=grounded,
+                    grounding_passed=grounded,
                     status=status,
                     assigned_to=rng.choice(["FAC-01", "OPS-04", "IT-01", None]),
                     created_at=created,

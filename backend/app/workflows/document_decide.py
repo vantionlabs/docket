@@ -189,12 +189,18 @@ class ApplyRails(Node):
             rule=rule,
         )
 
+        coverage = result.coverage
         row = DecisionRow(
             org_id=doc.org_id,
             user_id=doc.user_id,
             document_id=doc.id,
             extraction_id=ctx.metadata["extraction"].id,
             outcome=str(final.outcome),
+            # What the model said before the rails touched it. Stored so the
+            # history can be replayed against a rule that does not exist yet.
+            proposed_outcome=str(result.decision.outcome),
+            coverage_complete=coverage.complete if coverage is not None else None,
+            coverage_recall=round(coverage.recall, 3) if coverage is not None else None,
             rationale=final.rationale,
             unmet_conditions=final.unmet_conditions,
             rail_notes=final.rail_notes,

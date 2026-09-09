@@ -1,6 +1,7 @@
 """The Vertical protocol and its registry."""
 
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Protocol
 
 from pydantic import BaseModel
@@ -73,6 +74,16 @@ class Vertical(Protocol):
 
     def check(self, document: BaseModel) -> DeterministicChecks:
         """Run the checks that need no model."""
+        ...
+
+    def amount(self, document: BaseModel) -> Decimal | None:
+        """What this document is worth, where it says.
+
+        The one number every vertical has to be able to produce, because
+        every question asked of decision history — what a threshold change
+        is worth, what a clause governs in euros — is asked in money. None
+        when the document does not state one.
+        """
         ...
 
 
