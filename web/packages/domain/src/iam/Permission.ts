@@ -18,6 +18,10 @@ export const statements = {
   ac: ["create", "read", "update", "delete"],
   // Ours, unknown to better-auth, governed only by our policies.
   contact: ["read", "create", "update", "delete"],
+  decision: ["read", "approve", "reject", "edit"],
+  document: ["read", "upload", "delete"],
+  rule: ["read", "create", "update", "delete"],
+  replay: ["run"],
 } as const satisfies Record<string, ReadonlyArray<string>>;
 
 export type Statements = typeof statements;
@@ -51,7 +55,9 @@ export type Grants = { readonly [K in Resource]?: ReadonlyArray<Statements[K][nu
 /**
  * Owner and admin match better-auth's own defaults so its endpoints behave as
  * documented; the only difference is `organization:delete`, which stays with
- * the owner. `contact` is ours to decide.
+ * the owner. `contact` and docket's own resources are ours to decide: a member
+ * reads and cannot approve, because approving is exactly what separates a
+ * reviewer from a viewer, and both are custom roles built on top of `member`.
  */
 export const grantsFor: Record<Role, Grants> = {
   owner: {
@@ -61,6 +67,10 @@ export const grantsFor: Record<Role, Grants> = {
     team: ["create", "update", "delete"],
     ac: ["create", "read", "update", "delete"],
     contact: ["read", "create", "update", "delete"],
+    decision: ["read", "approve", "reject", "edit"],
+    document: ["read", "upload", "delete"],
+    rule: ["read", "create", "update", "delete"],
+    replay: ["run"],
   },
   admin: {
     organization: ["update"],
@@ -69,10 +79,17 @@ export const grantsFor: Record<Role, Grants> = {
     team: ["create", "update", "delete"],
     ac: ["create", "read", "update", "delete"],
     contact: ["read", "create", "update", "delete"],
+    decision: ["read", "approve", "reject", "edit"],
+    document: ["read", "upload", "delete"],
+    rule: ["read", "create", "update", "delete"],
+    replay: ["run"],
   },
   member: {
     ac: ["read"],
     contact: ["read", "create", "update"],
+    decision: ["read"],
+    document: ["read"],
+    rule: ["read"],
   },
 };
 

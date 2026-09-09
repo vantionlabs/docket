@@ -50,10 +50,15 @@ describe("access control reconciliation", () => {
 
   it("does not hand a member anything better-auth's default member lacks", () => {
     const theirs = new Set(flattenRole(defaultRoles.member.statements));
+    // Resources better-auth has never heard of are ours alone to grant, and a
+    // member holding one says nothing about the two systems disagreeing. Asking
+    // `defaultStatements` rather than naming them keeps this true as we add our
+    // own, while still failing if a member gains `organization:delete`.
+    const betterAuthKnows = new Set(Object.keys(defaultStatements));
 
     for (const granted of permissionsFor("member")) {
-      // `contact` is ours alone; better-auth has never heard of it.
-      if (granted.startsWith("contact:")) continue;
+      const resource = granted.split(":")[0];
+      if (resource === undefined || !betterAuthKnows.has(resource)) continue;
 
       expect(theirs.has(granted), `member gained "${granted}" beyond better-auth's default`).toBe(
         true,
