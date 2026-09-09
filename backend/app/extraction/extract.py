@@ -14,7 +14,7 @@ from pydantic_ai import Agent
 
 from app.config import settings
 from app.extraction.provenance import VerificationReport, verify
-from app.llm.providers import chat_model
+from app.llm.providers import chat_model, model_settings
 from app.logging import get_logger
 
 log = get_logger(__name__)
@@ -55,6 +55,7 @@ def _agent(output_type: type) -> Agent:
         # One retry is not enough through an extra network hop:
         # structured output occasionally comes back unparseable and
         # the whole decision is lost over a transient.
+        model_settings=model_settings(),
         retries=3,
     )
 

@@ -59,6 +59,23 @@ class Settings(BaseSettings):
     `openrouter` reaches many vendors through one key, with model ids like
     `anthropic/claude-sonnet-5`. See app/llm/providers.py for what this
     pipeline needs from a model before you point it at an arbitrary one."""
+    max_output_tokens: int = 2048
+    """Ceiling on a single completion.
+
+    Not a cost control — a correctness one. Providers reserve the full
+    `max_tokens` against the account balance *before* generating a token, so
+    an unset ceiling (64k on current Claude models) is refused outright
+    whenever the remaining balance is smaller than the reservation, whatever
+    the request would actually have cost. The error reads exactly like an
+    empty account:
+
+        "you requested up to 64000 tokens, but can only afford 59802"
+
+    That was diagnosed as exhausted credit for most of a session while there
+    was still money in the account and every call was being refused. A
+    decision or a judgement is a few hundred tokens, so a ceiling near the
+    work is right independently of billing.
+    """
     chat_model: str = "gpt-4.1"
     """Model / deployment name (no provider prefix — llm_provider sets that)."""
     grounding_model: str = "gpt-4.1-mini"

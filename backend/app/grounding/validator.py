@@ -24,7 +24,7 @@ from app.agent.output import GroundedAnswer
 from app.config import settings
 from app.grounding.turn_registry import TurnRegistry
 from app.grounding.verbatim import contains_verbatim
-from app.llm.providers import grounding_model
+from app.llm.providers import grounding_model, model_settings
 from app.logging import get_logger
 
 log = get_logger(__name__)
@@ -67,7 +67,12 @@ Return a decision for every citation index given."""
 def _judge_agent() -> Agent[None, _JudgeDecisionList]:
     # The judge runs through the same provider abstraction as the agent, so it
     # works with OpenAI, Anthropic (Claude), or Azure via config.
-    return Agent(grounding_model(), output_type=_JudgeDecisionList, instructions=_JUDGE_PROMPT)
+    return Agent(
+        grounding_model(),
+        output_type=_JudgeDecisionList,
+        instructions=_JUDGE_PROMPT,
+        model_settings=model_settings(),
+    )
 
 
 def _judge(

@@ -31,7 +31,7 @@ from app.config import settings
 from app.decisions.models import Decision, Outcome
 from app.decisions.policy import PolicyClause, PolicySource
 from app.grounding.verbatim import contains_verbatim, normalize
-from app.llm.providers import chat_model, grounding_model
+from app.llm.providers import chat_model, grounding_model, model_settings
 from app.logging import get_logger
 from app.verticals.base import DeterministicChecks, Vertical
 
@@ -128,7 +128,12 @@ class _JudgeDecisionList(BaseModel):
 
 @lru_cache
 def _judge_agent() -> Agent[None, _JudgeDecisionList]:
-    return Agent(grounding_model(), output_type=_JudgeDecisionList, instructions=_JUDGE_PROMPT)
+    return Agent(
+        grounding_model(),
+        output_type=_JudgeDecisionList,
+        instructions=_JUDGE_PROMPT,
+        model_settings=model_settings(),
+    )
 
 
 def judge_citations(
@@ -166,6 +171,7 @@ def _agent() -> Agent[None, Decision]:
         # One retry is not enough through an extra network hop:
         # structured output occasionally comes back unparseable and
         # the whole decision is lost over a transient.
+        model_settings=model_settings(),
         retries=3,
     )
 

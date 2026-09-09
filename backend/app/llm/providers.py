@@ -96,3 +96,18 @@ def chat_model() -> Any:
 def grounding_model() -> Any:
     """The grounding judge's model (usually a cheaper one)."""
     return _build(settings.grounding_model)
+
+
+def model_settings(max_tokens: int | None = None):
+    """Shared settings for every agent in this app.
+
+    One place, so no agent can be built without an output ceiling. The judge
+    is the one that gets forgotten, and a judge whose request is refused
+    fails closed — which reports a grounding failure rather than a provider
+    problem, and makes a rejection rate that is really an outage.
+    """
+    from pydantic_ai.settings import ModelSettings
+
+    from app.config import settings as app_settings
+
+    return ModelSettings(max_tokens=max_tokens or app_settings.max_output_tokens)

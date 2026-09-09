@@ -16,7 +16,7 @@ from app.agent.deps import AgentDeps
 from app.agent.output import GroundedAnswer
 from app.agent.tools import read_chunk, search_documents
 from app.config import settings
-from app.llm.providers import chat_model
+from app.llm.providers import chat_model, model_settings
 
 _INSTRUCTIONS = (Path(__file__).parent / "instructions.md").read_text()
 
@@ -25,6 +25,7 @@ _INSTRUCTIONS = (Path(__file__).parent / "instructions.md").read_text()
 def get_agent() -> Agent[AgentDeps, GroundedAnswer]:
     agent: Agent[AgentDeps, GroundedAnswer] = Agent(
         chat_model(),
+        model_settings=model_settings(),
         deps_type=AgentDeps,
         output_type=GroundedAnswer,
         instructions=_INSTRUCTIONS,

@@ -111,10 +111,15 @@ def contextualize(
 def _agent():
     from pydantic_ai import Agent
 
-    from app.llm.providers import grounding_model
+    from app.llm.providers import grounding_model, model_settings
 
     # The cheap model: this is a labelling job, not a reasoning one.
-    return Agent(grounding_model(), output_type=str, instructions=_LLM_PROMPT)
+    return Agent(
+        grounding_model(),
+        output_type=str,
+        instructions=_LLM_PROMPT,
+        model_settings=model_settings(),
+    )
 
 
 def _llm_context(chunk_content: str, filename: str, document_text: str) -> str:

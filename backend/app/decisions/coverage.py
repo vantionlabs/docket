@@ -266,7 +266,7 @@ def extract_obligations(
     from pydantic_ai import Agent
 
     from app.config import settings
-    from app.llm.providers import grounding_model
+    from app.llm.providers import grounding_model, model_settings
     from app.observability.usage import record_run_usage
 
     class _Obligation(BaseModel):
@@ -295,7 +295,12 @@ def extract_obligations(
     from app.verticals import get_vertical
 
     dimensions = sorted(get_vertical(schema_name).dimensions)
-    agent = Agent(grounding_model(), output_type=_Obligations, instructions=_EXTRACT_PROMPT)
+    agent = Agent(
+        grounding_model(),
+        output_type=_Obligations,
+        instructions=_EXTRACT_PROMPT,
+        model_settings=model_settings(),
+    )
     result = agent.run_sync(
         f"AVAILABLE DIMENSIONS: {', '.join(dimensions)}\n"
         f"TARGET DOCUMENT KIND: {schema_name}\n"
