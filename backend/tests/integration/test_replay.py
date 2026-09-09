@@ -16,6 +16,7 @@ from datetime import date
 from decimal import Decimal
 
 import pytest
+from sqlalchemy import func, select
 
 from app.db.models import (
     Collection,
@@ -26,7 +27,7 @@ from app.db.models import (
     SourceDocument,
 )
 from app.decisions.models import Outcome
-from app.decisions.replay import exposure, replay, rule_from_conditions
+from app.decisions.replay import exposure, replay, rule_from_conditions, sweep
 from app.extraction.provenance import ExtractedField
 from app.extraction.schemas.invoice import Invoice, LineItem
 from tests.integration.conftest import _purge
@@ -367,3 +368,73 @@ def test_exposure_names_the_decisions_a_clause_is_holding_up(db, user, org):
     assert found.amount == Decimal("1250.00")
     assert found.outcomes == {"auto_approve": 1, "route_for_approval": 1}
     assert unrelated.id not in {decision_id for decision_id, _ in found.sample}
+
+
+# --- the ladder ----------------------------------------------------------
+
+
+def test_the_sweep_agrees_with_replaying_each_rung_separately(db, user, org):
+    """The sweep exists only to avoid scanning the history once per rung. If
+    it ever disagrees with the thing it is an optimisation of, it is not an
+    optimisation."""
+    for total in ("200.00", "800.00", "1500.00", "3000.00", "9000.00"):
+        _decide(db, user, org, _invoice(total), Outcome.route_for_approval,
+                proposed=Outcome.auto_approve)
+
+    limits = [Decimal("500"), Decimal("1000"), Decimal("2500"), Decimal("10000")]
+    considered, unreplayable, points = sweep(db, org, limits)
+
+    assert considered == 5
+    assert unreplayable == 0
+    for point in points:
+        one = replay(
+            db, org, rule_from_conditions("x", {"max_total_incl_vat": str(point.limit)})
+        )
+        assert point.automatic == one.auto_approved_after, point.limit
+        assert point.newly_automatic == len(one.newly_automatic), point.limit
+        assert point.value_newly_automatic == one.value_newly_automatic, point.limit
+
+
+def test_the_ladder_is_monotonic_in_the_limit(db, user, org):
+    """Raising a ceiling cannot automate fewer decisions. Not a deep truth —
+    but it is the shape a client reads off the curve, and if the curve ever
+    dips the number they are reading is not the one they think."""
+    for total in ("100.00", "700.00", "1200.00", "4000.00"):
+        _decide(db, user, org, _invoice(total), Outcome.route_for_approval,
+                proposed=Outcome.auto_approve)
+
+    _, _, points = sweep(
+        db, org, [Decimal(x) for x in ("50", "500", "1000", "2000", "5000")]
+    )
+    counts = [p.automatic for p in points]
+    assert counts == sorted(counts)
+    assert counts[0] == 0 and counts[-1] == 4
+
+
+# --- the statistic the demo leads with ------------------------------------
+
+
+def test_auto_approved_counts_the_outcome_not_a_rule_id(db, user, org):
+    """`/decisions/stats` reports an auto-approved share, and it used to
+    count rows carrying a `rule_id`. That is a fair proxy in real data and a
+    wrong one the moment anything else writes to the column — which the
+    volume fixtures did, as a purge tag, making the demo's headline metric
+    read 100% when the true figure was zero."""
+    from app.db.models import Decision as DecisionRow
+
+    tagged = _decide(db, user, org, _invoice("400.00"), Outcome.route_for_approval)
+    tagged.rule_id = "some-fixture-tag"
+    db.commit()
+
+    automatic = db.scalar(
+        select(func.count())
+        .select_from(DecisionRow)
+        .where(DecisionRow.org_id == org, DecisionRow.outcome == str(Outcome.auto_approve))
+    )
+    tagged_rows = db.scalar(
+        select(func.count())
+        .select_from(DecisionRow)
+        .where(DecisionRow.org_id == org, DecisionRow.rule_id.is_not(None))
+    )
+    assert automatic == 0
+    assert tagged_rows == 1

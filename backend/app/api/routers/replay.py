@@ -22,11 +22,14 @@ from app.api.schemas import (
     FlipOut,
     ReplayOut,
     ReplayRequest,
+    SweepOut,
+    SweepPointOut,
+    SweepRequest,
 )
 from app.auth.dependencies import CurrentUser, get_current_user
 from app.db.engine import get_db
 from app.db.models import Collection, DocumentChunk, Role
-from app.decisions.replay import exposure, replay, rule_from_conditions
+from app.decisions.replay import exposure, replay, rule_from_conditions, sweep
 
 router = APIRouter(prefix="/replay", tags=["replay"], responses=UNAUTHORIZED)
 
@@ -95,6 +98,50 @@ def replay_rule(
         value_newly_automatic=report.value_newly_automatic,
         newly_automatic=[_flip(f) for f in report.newly_automatic],
         newly_reviewed=[_flip(f) for f in report.newly_reviewed],
+    )
+
+
+@router.post(
+    "/sweep",
+    response_model=SweepOut,
+    summary="The whole threshold ladder at once",
+    description=(
+        "Every limit in `limits`, evaluated against every decision in one pass "
+        "over the history — the automation-versus-threshold curve a client "
+        "reads before picking a number.\n\n"
+        "One pass rather than one per rung: the expensive part is reading the "
+        "extraction, and every candidate rule reads the same one."
+    ),
+)
+def sweep_limits(
+    request: SweepRequest,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SweepOut:
+    _require_owner(user)
+
+    considered, unreplayable, points = sweep(
+        db,
+        user.org_id,
+        request.limits,
+        require_po=request.require_po,
+        approved_suppliers=request.approved_suppliers,
+        schema_name=request.schema_name,
+    )
+    return SweepOut(
+        considered=considered,
+        unreplayable=unreplayable,
+        points=[
+            SweepPointOut(
+                limit=p.limit,
+                automatic=p.automatic,
+                rate=p.rate,
+                newly_automatic=p.newly_automatic,
+                newly_reviewed=p.newly_reviewed,
+                value_newly_automatic=p.value_newly_automatic,
+            )
+            for p in points
+        ],
     )
 
 

@@ -302,6 +302,35 @@ class ReplayOut(BaseModel):
     newly_reviewed: list[FlipOut]
 
 
+class SweepRequest(BaseModel):
+    """A ladder of limits to try, evaluated in one pass over the history."""
+
+    limits: list[Decimal] = Field(
+        default_factory=lambda: [
+            Decimal(x) for x in ("250", "500", "1000", "2500", "5000", "10000", "25000")
+        ],
+        max_length=24,
+    )
+    require_po: bool = True
+    approved_suppliers: list[str] = Field(default_factory=list)
+    schema_name: str = "invoice"
+
+
+class SweepPointOut(BaseModel):
+    limit: Decimal
+    automatic: int
+    rate: float
+    newly_automatic: int
+    newly_reviewed: int
+    value_newly_automatic: Decimal
+
+
+class SweepOut(BaseModel):
+    considered: int
+    unreplayable: int
+    points: list[SweepPointOut]
+
+
 class ExposureOut(BaseModel):
     """Which decisions rest on one clause. Exact, and no further.
 

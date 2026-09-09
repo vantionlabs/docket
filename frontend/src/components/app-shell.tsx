@@ -18,6 +18,7 @@ const NAV = [
   { href: "/chat", label: "Chat" },
   { href: "/audit", label: "Audit" },
   { href: "/settings/rules", label: "Rules" },
+  { href: "/settings/replay", label: "Replay" },
 ];
 
 export function AppShell({

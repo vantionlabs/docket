@@ -221,6 +221,131 @@ def replay(
     return report
 
 
+@dataclass
+class SweepPoint:
+    """One rung of the ladder: a limit, and what it would automate."""
+
+    limit: Decimal
+    automatic: int
+    newly_automatic: int
+    newly_reviewed: int
+    value_newly_automatic: Decimal
+
+    @property
+    def rate(self) -> float:
+        return self._rate
+
+    _rate: float = 0.0
+
+
+def sweep(
+    db,
+    org_id: uuid.UUID,
+    limits: list[Decimal],
+    require_po: bool = True,
+    approved_suppliers: list[str] | None = None,
+    schema_name: str = "invoice",
+) -> tuple[int, int, list[SweepPoint]]:
+    """The whole ladder in one pass over the history.
+
+    Running `replay` once per rung would scan five thousand rows once per
+    rung for no reason: the expensive part is reading and validating the
+    extraction, and every candidate rule reads the same one. So the rows are
+    walked once and each is put through every rule.
+
+    Returns `(considered, unreplayable, points)` so the caller can report
+    the population the curve was measured over rather than just the curve.
+    """
+    from sqlalchemy import select
+
+    from app.db.models import Decision as DecisionRow
+    from app.db.models import Extraction
+
+    vertical = get_vertical(schema_name)
+    rules = [
+        rule_from_conditions(
+            f"limit {limit}",
+            {
+                "max_total_incl_vat": str(limit),
+                "require_po": require_po,
+                "approved_suppliers": approved_suppliers or [],
+            },
+        )
+        for limit in limits
+    ]
+    automatic = [0] * len(rules)
+    gained = [0] * len(rules)
+    lost = [0] * len(rules)
+    value = [Decimal(0)] * len(rules)
+    considered = 0
+    unreplayable = 0
+
+    rows = db.execute(
+        select(DecisionRow, Extraction)
+        .join(Extraction, DecisionRow.extraction_id == Extraction.id)
+        .where(DecisionRow.org_id == org_id, Extraction.schema_name == schema_name)
+    ).all()
+
+    for row, extraction in rows:
+        if row.proposed_outcome is None:
+            unreplayable += 1
+            continue
+        try:
+            proposed = Outcome(row.proposed_outcome)
+            extracted = vertical.schema.model_validate(extraction.fields)
+        except Exception:  # noqa: BLE001
+            unreplayable += 1
+            continue
+
+        considered += 1
+        result = DecisionResult(
+            decision=Decision(
+                outcome=proposed,
+                rationale=row.rationale,
+                unmet_conditions=[],
+                assignee_hint=row.assigned_to,
+            ),
+            clauses=[],
+            grounding_passed=row.grounding_passed,
+            grounding_failure=row.grounding_failure or "",
+            coverage=(
+                None if row.coverage_complete is None else _StoredCoverage(row.coverage_complete)
+            ),
+        )
+        amount = vertical.amount(extracted) or Decimal(0)
+        was_automatic = row.outcome == str(Outcome.auto_approve)
+
+        for index, rule in enumerate(rules):
+            final = apply_rails(
+                result,
+                extracted,
+                list(extraction.unverified_fields or []),
+                list(extraction.arithmetic_failures or []),
+                rule=rule,
+            )
+            now_automatic = final.outcome is Outcome.auto_approve
+            if now_automatic:
+                automatic[index] += 1
+            if now_automatic and not was_automatic:
+                gained[index] += 1
+                value[index] += amount
+            elif was_automatic and not now_automatic:
+                lost[index] += 1
+
+    points = [
+        SweepPoint(
+            limit=limit,
+            automatic=automatic[index],
+            newly_automatic=gained[index],
+            newly_reviewed=lost[index],
+            value_newly_automatic=value[index],
+            _rate=automatic[index] / considered if considered else 0.0,
+        )
+        for index, limit in enumerate(limits)
+    ]
+    return considered, unreplayable, points
+
+
 def rule_from_conditions(
     name: str, conditions: dict, active: bool = True
 ) -> AutoApproveRule:

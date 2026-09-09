@@ -41,7 +41,14 @@ from app.db.models import (  # noqa: E402
 )
 from evals.factories import build_invoices  # noqa: E402
 
-MARKER = "volume-fixture"
+# Fixtures are identified by the R2 key prefix they already carry, not by
+# a marker written into a domain column. `rule_id` used to hold this, and
+# `rule_id` means "a rule authorised this auto-approval" — so every fixture
+# row counted as auto-approved and the demo's headline metric read 100%
+# when the true figure was zero. A fixture that has to lie about the data to
+# be findable is a fixture that will eventually be believed.
+MARKER = "volume/"
+FIXTURE_MODEL = "volume-fixture"
 DEMO_EMAIL = "demo@northwind.nl"
 
 # How often a decision fails grounding regardless of what the invoice says.
@@ -87,9 +94,7 @@ def _outcomes(scenario, rng) -> tuple[str, str, bool, DecisionStatus]:
 def purge(db) -> int:
     """Remove the fixture rows and the documents they hang off."""
     doc_ids = list(
-        db.scalars(
-            select(Decision.document_id).where(Decision.rule_id == MARKER)
-        )
+        db.scalars(select(SourceDocument.id).where(SourceDocument.r2_key.startswith(MARKER)))
     )
     if not doc_ids:
         return 0
@@ -162,7 +167,7 @@ def main() -> int:
                     unverified_fields=[],
                     arithmetic_ok="arithmetic" not in invoice.scenario.key,
                     arithmetic_failures=[],
-                    model="volume-fixture",
+                    model=FIXTURE_MODEL,
                     created_at=created,
                 )
                 db.add(extraction)
@@ -177,7 +182,10 @@ def main() -> int:
                     rationale=invoice.scenario.note,
                     unmet_conditions=[invoice.scenario.note],
                     rail_notes=[],
-                    rule_id=MARKER,
+                    # No rule is configured for the demo org, so nothing
+                    # authorised an automatic approval. Saying otherwise here
+                    # is what broke the auto-approved statistic.
+                    rule_id=None,
                     proposed_outcome=proposed,
                     coverage_complete=grounded,
                     grounding_passed=grounded,
@@ -224,14 +232,16 @@ def main() -> int:
             print(f"  {written}/{len(invoices)}")
 
         pending = db.scalar(
-            select(Decision).where(
-                Decision.rule_id == MARKER,
+            select(Decision)
+            .join(SourceDocument, Decision.document_id == SourceDocument.id)
+            .where(
+                SourceDocument.r2_key.startswith(MARKER),
                 Decision.status == DecisionStatus.pending_review,
             )
         )
         print(
             f"\nwrote {written} decisions spread over {args.days} days, "
-            f"tagged rule_id={MARKER!r}"
+            f"identified by the {MARKER!r} R2 key prefix"
         )
         print(f"queue now has pending rows: {'yes' if pending else 'no'}")
         print("remove them with: uv run python scripts/generate_volume.py --purge")

@@ -142,7 +142,10 @@ def decision_stats(
         "pending": count(Decision.status == DecisionStatus.pending_review),
         "executed": count(Decision.status == DecisionStatus.executed),
         "total": total,
-        "auto_approved": count(Decision.rule_id.is_not(None)),
+        # Counted on the outcome, which is what the label says. It used to
+        # count rows with a `rule_id`, a fair proxy in real data and a wrong
+        # one the moment anything else wrote to that column.
+        "auto_approved": count(Decision.outcome == str(Outcome.auto_approve)),
         "overridden": count(Decision.override_outcome.is_not(None)),
         # Share of reviewed decisions where the human disagreed. Undefined
         # rather than zero when nobody has reviewed anything yet.
