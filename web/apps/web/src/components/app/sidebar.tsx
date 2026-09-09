@@ -5,7 +5,7 @@ import { Separator } from "@/components/ui/separator.js";
 import type { LinkProps } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
 import { Effect } from "effect";
-import { LayoutDashboard, Settings, Users } from "lucide-react";
+import { Inbox, LayoutDashboard, Settings, Users } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 /** Exported for the command palette, so the two cannot list different pages. */
@@ -16,6 +16,7 @@ export const nav: ReadonlyArray<{
   readonly exact?: boolean;
 }> = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, exact: true },
+  { to: "/queue", label: "Review queue", icon: Inbox },
   { to: "/contacts", label: "Contacts", icon: Users },
   // `/settings` rather than a subpage: it redirects to General, and matching
   // non-exactly is what keeps this item lit on every settings page instead of

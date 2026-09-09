@@ -15,6 +15,8 @@ export const Keys = {
    */
   organization: "organization",
   contacts: "contacts",
+  /** The review queue. Approving or rejecting removes a row from it. */
+  decisions: "decisions",
   /** The audit trail. Every mutation adds to it, so it is refreshed broadly. */
   audit: "audit",
   apiKeys: "apiKeys",
