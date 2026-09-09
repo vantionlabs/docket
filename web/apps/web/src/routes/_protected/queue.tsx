@@ -3,10 +3,11 @@ import { QueryError } from "@/components/app/query-error.js";
 import { QueueTable } from "@/components/decision/queue-table.js";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import type { DecisionId } from "@forge/domain/decision/DecisionRpc";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { AsyncResult } from "effect/unstable/reactivity";
 
 const Queue = () => {
+  const navigate = useNavigate();
   const queue = useAtomValue(queueAtom);
   const approve = useAtomSet(approveDecisionAtom);
   const approving = useAtomValue(approveDecisionAtom);
@@ -37,6 +38,9 @@ const Queue = () => {
         // detail screen, where the reviewer can see what they are overruling.
         onApprove={(id: DecisionId) => approve({ id, overrideOutcome: null, note: null })}
         onReject={(id: DecisionId) => reject({ id, note: null })}
+        onOpen={(id: DecisionId) => {
+          void navigate({ to: "/decisions/$decisionId", params: { decisionId: id } });
+        }}
       />
     </section>
   );

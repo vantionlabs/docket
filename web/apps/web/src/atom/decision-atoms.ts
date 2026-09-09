@@ -1,7 +1,8 @@
 import { AppRpc } from "@/atom/app-rpc.js";
 import { Keys } from "@/atom/reactivity-keys.js";
-import type { DecisionId } from "@forge/domain/decision/DecisionRpc";
+import { DecisionId } from "@forge/domain/decision/DecisionRpc";
 import { Effect } from "effect";
+import { Atom } from "effect/unstable/reactivity";
 
 /**
  * The queue and the two ways out of it.
@@ -18,6 +19,19 @@ const reads = [Keys.organization, Keys.decisions];
 export const queueAtom = AppRpc.query("ListQueue", { status: "pending_review" }, {
   reactivityKeys: reads,
 });
+
+/** One decision in full, keyed so each gets its own atom. */
+export const decisionAtom = Atom.family((id: string) =>
+  Atom.withReactivity(reads)(
+    AppRpc.runtime.atom(
+      Effect.gen(function*() {
+        const client = yield* AppRpc;
+
+        return yield* client("GetDecision", { id: DecisionId.make(id) });
+      }),
+    ),
+  )
+);
 
 export const approveDecisionAtom = AppRpc.runtime.fn<{
   readonly id: DecisionId;

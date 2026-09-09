@@ -10,6 +10,7 @@ import {
   TableRow,
 } from "@/components/ui/table.js";
 import type { DecisionId, DecisionSummary } from "@forge/domain/decision/DecisionRpc";
+import { Link } from "@tanstack/react-router";
 import { DateTime } from "effect";
 import { Check, Inbox, ShieldAlert, X } from "lucide-react";
 import * as React from "react";
@@ -35,11 +36,12 @@ export const QueueTable = (props: {
   readonly busy: boolean;
   readonly onApprove: (id: DecisionId) => void;
   readonly onReject: (id: DecisionId) => void;
+  readonly onOpen: (id: DecisionId) => void;
 }) => {
   const [selected, setSelected] = React.useState(0);
   const rows = React.useRef<Array<HTMLTableRowElement | null>>([]);
 
-  const { decisions, busy, onApprove, onReject } = props;
+  const { decisions, busy, onApprove, onReject, onOpen } = props;
   // Clamped rather than stored, so a row leaving the queue under the cursor
   // cannot leave the selection pointing past the end.
   const index = decisions.length === 0 ? 0 : Math.min(selected, decisions.length - 1);
@@ -73,6 +75,9 @@ export const QueueTable = (props: {
         case "r":
           if (current !== undefined && !busy) onReject(current.id);
           break;
+        case "Enter":
+          if (current !== undefined) onOpen(current.id);
+          break;
         default:
           return;
       }
@@ -82,7 +87,7 @@ export const QueueTable = (props: {
 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [decisions, index, busy, move, onApprove, onReject]);
+  }, [decisions, index, busy, move, onApprove, onReject, onOpen]);
 
   React.useEffect(() => {
     rows.current[index]?.scrollIntoView({ block: "nearest" });
@@ -105,6 +110,7 @@ export const QueueTable = (props: {
         <Key>k</Key> move
         <Key>a</Key> approve
         <Key>r</Key> reject
+        <Key>↵</Key> open
       </p>
 
       <div className="overflow-x-auto">
@@ -130,7 +136,13 @@ export const QueueTable = (props: {
                 onClick={() => setSelected(row)}
               >
                 <TableCell>
-                  <Badge variant="secondary">{decision.effectiveOutcome}</Badge>
+                  <Link
+                    to="/decisions/$decisionId"
+                    params={{ decisionId: decision.id }}
+                    className="rounded-sm focus-visible:ring-2 focus-visible:outline-none"
+                  >
+                    <Badge variant="secondary">{decision.effectiveOutcome}</Badge>
+                  </Link>
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground">
                   {decision.assignedTo ?? "—"}

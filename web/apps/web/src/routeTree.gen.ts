@@ -22,6 +22,7 @@ import { Route as AuthResetPasswordRouteImport } from './routes/auth/reset-passw
 import { Route as AuthSignInRouteImport } from './routes/auth/sign-in'
 import { Route as AuthSignUpRouteImport } from './routes/auth/sign-up'
 import { Route as AuthVerifiedRouteImport } from './routes/auth/verified'
+import { Route as ProtectedDecisionsDecisionIdRouteImport } from './routes/_protected/decisions/$decisionId'
 import { Route as ProtectedSettingsIndexRouteImport } from './routes/_protected/settings/index'
 import { Route as ProtectedSettingsApiKeysRouteImport } from './routes/_protected/settings/api-keys'
 import { Route as ProtectedSettingsAuditRouteImport } from './routes/_protected/settings/audit'
@@ -93,6 +94,12 @@ const AuthVerifiedRoute = AuthVerifiedRouteImport.update({
   path: '/verified',
   getParentRoute: () => AuthRouteRoute,
 } as any)
+const ProtectedDecisionsDecisionIdRoute =
+  ProtectedDecisionsDecisionIdRouteImport.update({
+    id: '/decisions/$decisionId',
+    path: '/decisions/$decisionId',
+    getParentRoute: () => ProtectedRoute,
+  } as any)
 const ProtectedSettingsIndexRoute = ProtectedSettingsIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -140,6 +147,7 @@ export interface FileRoutesByFullPath {
   '/auth/sign-in': typeof AuthSignInRoute
   '/auth/sign-up': typeof AuthSignUpRoute
   '/auth/verified': typeof AuthVerifiedRoute
+  '/decisions/$decisionId': typeof ProtectedDecisionsDecisionIdRoute
   '/settings/api-keys': typeof ProtectedSettingsApiKeysRoute
   '/settings/audit': typeof ProtectedSettingsAuditRoute
   '/settings/general': typeof ProtectedSettingsGeneralRoute
@@ -159,6 +167,7 @@ export interface FileRoutesByTo {
   '/auth/sign-up': typeof AuthSignUpRoute
   '/auth/verified': typeof AuthVerifiedRoute
   '/': typeof ProtectedIndexRoute
+  '/decisions/$decisionId': typeof ProtectedDecisionsDecisionIdRoute
   '/settings/api-keys': typeof ProtectedSettingsApiKeysRoute
   '/settings/audit': typeof ProtectedSettingsAuditRoute
   '/settings/general': typeof ProtectedSettingsGeneralRoute
@@ -181,6 +190,7 @@ export interface FileRoutesById {
   '/auth/sign-up': typeof AuthSignUpRoute
   '/auth/verified': typeof AuthVerifiedRoute
   '/_protected/': typeof ProtectedIndexRoute
+  '/_protected/decisions/$decisionId': typeof ProtectedDecisionsDecisionIdRoute
   '/_protected/settings/api-keys': typeof ProtectedSettingsApiKeysRoute
   '/_protected/settings/audit': typeof ProtectedSettingsAuditRoute
   '/_protected/settings/general': typeof ProtectedSettingsGeneralRoute
@@ -203,6 +213,7 @@ export interface FileRouteTypes {
     | '/auth/sign-in'
     | '/auth/sign-up'
     | '/auth/verified'
+    | '/decisions/$decisionId'
     | '/settings/api-keys'
     | '/settings/audit'
     | '/settings/general'
@@ -222,6 +233,7 @@ export interface FileRouteTypes {
     | '/auth/sign-up'
     | '/auth/verified'
     | '/'
+    | '/decisions/$decisionId'
     | '/settings/api-keys'
     | '/settings/audit'
     | '/settings/general'
@@ -243,6 +255,7 @@ export interface FileRouteTypes {
     | '/auth/sign-up'
     | '/auth/verified'
     | '/_protected/'
+    | '/_protected/decisions/$decisionId'
     | '/_protected/settings/api-keys'
     | '/_protected/settings/audit'
     | '/_protected/settings/general'
@@ -349,6 +362,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthVerifiedRouteImport
       parentRoute: typeof AuthRouteRoute
     }
+    '/_protected/decisions/$decisionId': {
+      id: '/_protected/decisions/$decisionId'
+      path: '/decisions/$decisionId'
+      fullPath: '/decisions/$decisionId'
+      preLoaderRoute: typeof ProtectedDecisionsDecisionIdRouteImport
+      parentRoute: typeof ProtectedRoute
+    }
     '/_protected/settings/': {
       id: '/_protected/settings/'
       path: '/'
@@ -447,6 +467,7 @@ interface ProtectedRouteChildren {
   ProtectedContactsRoute: typeof ProtectedContactsRoute
   ProtectedQueueRoute: typeof ProtectedQueueRoute
   ProtectedIndexRoute: typeof ProtectedIndexRoute
+  ProtectedDecisionsDecisionIdRoute: typeof ProtectedDecisionsDecisionIdRoute
 }
 
 const ProtectedRouteChildren: ProtectedRouteChildren = {
@@ -454,6 +475,7 @@ const ProtectedRouteChildren: ProtectedRouteChildren = {
   ProtectedContactsRoute: ProtectedContactsRoute,
   ProtectedQueueRoute: ProtectedQueueRoute,
   ProtectedIndexRoute: ProtectedIndexRoute,
+  ProtectedDecisionsDecisionIdRoute: ProtectedDecisionsDecisionIdRoute,
 }
 
 const ProtectedRouteWithChildren = ProtectedRoute._addFileChildren(
