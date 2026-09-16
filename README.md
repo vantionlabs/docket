@@ -1,10 +1,29 @@
-# Docket
+<p align="center">
+  <a href="https://vantion.co">
+    <img src="https://raw.githubusercontent.com/vantionlabs/.github/main/profile/banner.png" alt="Vantion Labs" width="100%" />
+  </a>
+</p>
+
+<h1 align="center">Docket</h1>
+
+<p align="center">
+  <b>Documents checked against your own written policy, and decided.</b><br />
+  Clean cases execute themselves. Everything else reaches a person with the reason already written.
+</p>
+
+<p align="center">
+  <a href="https://github.com/vantionlabs/docket/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/vantionlabs/docket/actions/workflows/ci.yml/badge.svg" /></a>
+  <a href="https://www.python.org"><img alt="Python 3.12" src="https://img.shields.io/badge/python-3.12-3776AB?style=flat-square&logo=python&logoColor=white" /></a>
+  <a href="https://effect.website"><img alt="Effect 4" src="https://img.shields.io/badge/effect-4-2233f0?style=flat-square" /></a>
+  <a href="LICENSE"><img alt="MIT" src="https://img.shields.io/badge/licence-MIT-f4f4f6?style=flat-square" /></a>
+  <a href="https://vantion.co"><img alt="Vantion Labs" src="https://img.shields.io/badge/by-Vantion_Labs-2233f0?style=flat-square" /></a>
+</p>
+
+---
 
 Documents arrive. Docket reads them, pulls out the fields that matter, checks
 them against the client's own written policy, and produces a decision with the
-clause that justified it attached. Clean cases execute on their own. Everything
-else lands in a queue where a person approves it in seconds, with the reason
-already written.
+clause that justified it attached.
 
 **The refusal is the product.** Anything can draft an answer. What makes this
 sellable is that it knows when it is not allowed to decide, says why, and
@@ -50,7 +69,7 @@ Numbers from the build notes in [`docs/`](docs/), each with the run behind it.
 | Extraction spans that verified against the document | **5 of 5** documents in the M1 spike |
 | Policy clauses retrieved out of those that applied | **1.000 recall** over 99 labelled invoices |
 | Cost per decision | **~5¢**, three model calls ($4.78 for 99) |
-| Labelled violation types stopped at any price, by a mechanism that reads them | **4 of 9** (`evals/check_rule.py`) |
+| Labelled violations that reach auto-approve when the model is assumed wrong | **0 of 216**, with the rule fully armed |
 | Pipeline changes needed to add a second document type | **none** (M8) |
 
 Three findings shaped the build more than the numbers did:
@@ -64,14 +83,13 @@ Three findings shaped the build more than the numbers did:
   a list to match. Declaring citations first cost nothing.
   ([`docs/m5-baseline.md`](docs/m5-baseline.md))
 - **A rule whose safety rests on the model being right is not a gate.**
-  `evals/check_rule.py` asks, for free, what a proposed rule still stops if the
-  model proposed auto-approve for every invoice including the deliberate
-  nasties. At a €1,000 limit, four of the nine labelled violation types are
-  stopped by something that reads them at any limit; three are stopped only by
-  their price and walk through once the limit is raised; unknown suppliers and
-  short payment terms are stopped only when their rule conditions are armed.
-  The distinction between "stopped by a mechanism" and "stopped by its price"
-  is the whole point of the ladder.
+  `evals/check_rule.py` asks, with no model and no database, what a proposed
+  rule still stops if the model proposed auto-approve for every invoice,
+  including the deliberate nasties. Fully armed, nothing gets through. Armed
+  with a spend limit alone, 59 of them do, and the escape ladder separates the
+  violations stopped by a mechanism that reads them from the ones stopped only
+  by their price: raise the limit to €2,500 and every foreign-currency invoice
+  walks through. It runs on every push.
 
 ## Status
 
@@ -144,3 +162,17 @@ installed.
 - No arithmetic by model. A model asked to add up a column will sometimes add
   it up wrong.
 - No auto-approval without a configured rule, whatever the model proposes.
+
+## Contributing
+
+Issues and pull requests are welcome, especially eval cases that catch a real
+failure. Start with [CONTRIBUTING.md](CONTRIBUTING.md) and
+[AGENTS.md](AGENTS.md); security reports go to hello@vantion.co, see
+[SECURITY.md](SECURITY.md).
+
+## Licence
+
+MIT. See [LICENSE](LICENSE). The vendored Effect source under `web/repos/`
+keeps its own licence. Built by [Vantion Labs](https://vantion.co); if you want
+help putting a document-to-decision pipeline into production,
+[talk to the founder](https://vantion.co/book-a-call).

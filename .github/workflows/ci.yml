@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - run: uv python install 3.12
+      - run: uv sync --locked
+      - name: Lint
+        run: uv run ruff check .
+      - name: Tests (offline)
+        run: uv run pytest -m "not integration"
+      - name: What the rule stops when the model is wrong
+        # No model and no database: the real rails run against the labelled
+        # set under the worst assumption about the model. --strict fails the
+        # build if any deliberate nasty reaches auto_approve.
+        run: >
+          uv run python evals/check_rule.py
+          --limit 1000 --require-po --approved-suppliers --min-payment-days 14 --strict
+
+  web:
+    name: Web
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.12.4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Lint
+        run: pnpm lint
+      - name: Types
+        run: pnpm check
+      - name: Tests
+        # the row-level-security test runs against a real Postgres container
+        run: pnpm test
