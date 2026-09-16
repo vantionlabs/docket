@@ -55,3 +55,16 @@ backend/openapi.json
 
 # direnv config, not a secret — the forge boilerplate in web/ ships one
 !.envrc
+
+# Mirrored agent-tool skill copies. The canonical ones live in .agents/ and
+# .claude/; the rest are per-tool duplicates of the same files and a 12 MB
+# binary each.
+.agent/
+.cursor/
+.opencode/
+.vibe/
+.qoder/
+.pi/
+.kiro/
+.gemini/
+.codex/
