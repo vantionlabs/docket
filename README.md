@@ -171,12 +171,10 @@ installed.
 
 Issues and pull requests are welcome, especially eval cases that catch a real
 failure. Start with [CONTRIBUTING.md](CONTRIBUTING.md) and
-[AGENTS.md](AGENTS.md); security reports go to hello@vantion.co, see
+[AGENTS.md](AGENTS.md); security reports go through a private GitHub security advisory, see
 [SECURITY.md](SECURITY.md).
 
 ## Licence
 
 MIT. See [LICENSE](LICENSE). The vendored Effect source under `web/repos/`
-keeps its own licence. Built by [Vantion Labs](https://vantion.co); if you want
-help putting a document-to-decision pipeline into production,
-[talk to the founder](https://vantion.co/book-a-call).
+keeps its own licence. Built by [Vantion Labs](https://vantion.co).

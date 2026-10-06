@@ -2,7 +2,8 @@
 
 ## Reporting a vulnerability
 
-Email **hello@vantion.co** with "Security" in the subject. Include a
+Report it privately through GitHub: open the **Security** tab of this
+repository and choose **Report a vulnerability**. Include a
 description, the affected commit, and steps to reproduce. Please do not open a
 public issue.
 
