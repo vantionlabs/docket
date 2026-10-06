@@ -1,7 +1,5 @@
 <p align="center">
-  <a href="https://vantion.co">
     <img src="https://raw.githubusercontent.com/vantionlabs/.github/main/profile/banner.png" alt="Vantion Labs" width="100%" />
-  </a>
 </p>
 
 <h1 align="center">Docket</h1>
@@ -20,7 +18,7 @@
   <a href="https://effect.website"><img alt="Effect 4" src="https://img.shields.io/badge/Effect_4-2233f0?style=flat-square" /></a>
   <img alt="0 of 216 nasties released" src="https://img.shields.io/badge/auto--approve_gate-0_of_216_released-2233f0?style=flat-square" />
   <a href="LICENSE"><img alt="MIT" src="https://img.shields.io/badge/licence-MIT-f4f4f6?style=flat-square" /></a>
-  <a href="https://vantion.co"><img alt="Vantion Labs" src="https://img.shields.io/badge/by-Vantion_Labs-2233f0?style=flat-square" /></a>
+  <img alt="Vantion Labs" src="https://img.shields.io/badge/by-Vantion_Labs-2233f0?style=flat-square" />
 </p>
 
 ---
@@ -34,7 +32,7 @@ sellable is that it knows when it is not allowed to decide, says why, and
 escalates, and that every automatic decision carries a citation somebody can
 audit a year later.
 
-Built by [Vantion Labs](https://vantion.co) as a reference implementation of
+Built by Vantion Labs as a reference implementation of
 the document-to-decision pattern. Invoices against a procurement policy are the
 worked example; tenders are the second one, added as configuration.
 
@@ -177,4 +175,4 @@ failure. Start with [CONTRIBUTING.md](CONTRIBUTING.md) and
 ## Licence
 
 MIT. See [LICENSE](LICENSE). The vendored Effect source under `web/repos/`
-keeps its own licence. Built by [Vantion Labs](https://vantion.co).
+keeps its own licence. Built by Vantion Labs.
